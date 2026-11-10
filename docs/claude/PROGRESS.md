@@ -7,7 +7,7 @@
 | Seg | Title | Status | Branch |
 |---|---|---|---|
 | S1 | Foundation | ✅ done | `claude/s1-foundation` |
-| S2 | Data model | 👀 waiting for Tim's review/commit | `claude/s2-data-model` |
+| S2 | Data model | ✅ done | `claude/s2-data-model` |
 | S3 | Time & recurrence | ⏭️ next | — |
 | S4 | Services | ⬜ todo | — |
 | S5 | Commands | ⬜ todo | — |
@@ -53,7 +53,7 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
 - Done: Tim committed S1 as `30f90f4` and deployed on the Pi. Bot online, `/sidequest about` shows commit/branch/deploy time, and the second `update.sh` run wrote a backup. First deploy failed until `DATABASE_URL` and `POSTGRES_PASSWORD` matched; Postgres only applies `POSTGRES_PASSWORD` when the volume is first created (worth a line in the S7 runbook).
 - Next: S2 (S3 may go first instead; they are independent).
 
-### 2026-11-10 — S2 Data model built (waiting for review)
+### 2026-11-10 — S2 Data model built (done)
 - All 4 checklist items done on `claude/s2-data-model`. Uncommitted.
 - **Checks:** `ruff check .` clean · `ruff format --check .` clean · `pytest tests` with `TEST_DATABASE_URL` against `compose.test.yaml`: **57 passed** (unit + 20 integration). Without the env var the integration tests skip with a clear message. `alembic check` reports no drift between models and migrations.
 - **Files:** `core/enums.py` (new), `db/models.py` (new), `db/base.py`, `migrations/env.py`, `migrations/versions/0002_schema.py` (new), `alembic.ini`, `tests/integration/{conftest,test_migrations,test_schema}.py` (new).
@@ -69,4 +69,6 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - `alembic.ini` gained `path_separator = os` (silences an Alembic deprecation warning).
 - **Run integration tests:** `docker compose -f compose.test.yaml up -d`, then `TEST_DATABASE_URL=postgresql+asyncpg://sidequest:sidequest@localhost:55432/sidequest_test pytest`.
 - **Manual check (Tim):** on the Pi, `bash update.sh` → log shows "Running upgrade 0001 -> 0002"; the bot still starts and `/sidequest about` still works. No Discord-facing changes in S2.
+- Same session: descriptions added to the enums in `core/enums.py` (docstrings per value).
+- Done: Tim committed S2 as `4f7e7aa` and deployed on the Pi; migration `0002` applied and the bot works.
 - Next: S3 Time & recurrence.
