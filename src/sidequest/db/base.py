@@ -1,6 +1,8 @@
 """Declarative base with deterministic constraint names (stable Alembic diffs)."""
 
-from sqlalchemy import MetaData
+from datetime import datetime
+
+from sqlalchemy import DateTime, MetaData
 from sqlalchemy.orm import DeclarativeBase
 
 NAMING_CONVENTION = {
@@ -14,3 +16,5 @@ NAMING_CONVENTION = {
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
+    # Every datetime column is TIMESTAMPTZ; values are timezone-aware UTC.
+    type_annotation_map = {datetime: DateTime(timezone=True)}

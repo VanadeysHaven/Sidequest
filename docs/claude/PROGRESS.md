@@ -7,8 +7,8 @@
 | Seg | Title | Status | Branch |
 |---|---|---|---|
 | S1 | Foundation | ✅ done | `claude/s1-foundation` |
-| S2 | Data model | ⏭️ next | — |
-| S3 | Time & recurrence | ⬜ todo | — |
+| S2 | Data model | 👀 waiting for Tim's review/commit | `claude/s2-data-model` |
+| S3 | Time & recurrence | ⏭️ next | — |
 | S4 | Services | ⬜ todo | — |
 | S5 | Commands | ⬜ todo | — |
 | S6 | Reminders | ⬜ todo | — |
@@ -52,3 +52,21 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   5. On the Pi: `bash update.sh` → bot online, `/sidequest about` shows commit, branch and deploy time; run it a second time → `backups/backup-*.sql.gz` appears.
 - Done: Tim committed S1 as `30f90f4` and deployed on the Pi. Bot online, `/sidequest about` shows commit/branch/deploy time, and the second `update.sh` run wrote a backup. First deploy failed until `DATABASE_URL` and `POSTGRES_PASSWORD` matched; Postgres only applies `POSTGRES_PASSWORD` when the volume is first created (worth a line in the S7 runbook).
 - Next: S2 (S3 may go first instead; they are independent).
+
+### 2026-11-10 — S2 Data model built (waiting for review)
+- All 4 checklist items done on `claude/s2-data-model`. Uncommitted.
+- **Checks:** `ruff check .` clean · `ruff format --check .` clean · `pytest tests` with `TEST_DATABASE_URL` against `compose.test.yaml`: **57 passed** (unit + 20 integration). Without the env var the integration tests skip with a clear message. `alembic check` reports no drift between models and migrations.
+- **Files:** `core/enums.py` (new), `db/models.py` (new), `db/base.py`, `migrations/env.py`, `migrations/versions/0002_schema.py` (new), `alembic.ini`, `tests/integration/{conftest,test_migrations,test_schema}.py` (new).
+- **Deviations / decisions:**
+  - Migration is revision **`0002`** (`0002_schema.py`), not `0001_initial`: the empty `0001` is already applied on the Pi, so filling it in would never run there.
+  - Enums `Scope`, `TodoKind`, `TodoStatus`, `OccurrenceStatus` live in `sidequest.core.enums` (StrEnum) and are re-exported from `sidequest.db.models`. Columns store the enum **values** (`'server'`, not `'SERVER'`) as `VARCHAR(16)` + CHECK.
+  - All relationships use **`lazy="raise"`** + `passive_deletes=True`. S4+ must load `Todo.assignees/subtasks/occurrences` (and `.todo` on children) explicitly with `selectinload`/`joinedload`. New, unflushed objects can take children in the constructor. Deleting a `Todo` via the ORM works without loading children (DB cascade); tested.
+  - `Todo.recurrence` is `JSONB(none_as_null=True)`. Without it SQLAlchemy writes Python `None` as JSON `'null'`, which slipped past the `recurring_rule` CHECK (caught by the tests).
+  - `Base.type_annotation_map` maps `datetime` → `TIMESTAMPTZ`, so every `Mapped[datetime]` column is timezone-aware.
+  - Extra index `ix_occurrences_todo_id` (not in the segment doc): the partial unique indexes only cover `pending`/`sent`, and the FK cascade and per-to-do lookups need a plain index.
+  - `created_at`/`updated_at` use DB `now()` defaults (as the segment doc says), not `Clock`. Business timestamps (`completed_at`, `sent_at`, …) must still come from `Clock`.
+  - The integration conftest drops and recreates the `public` schema once per run, and refuses (fails) unless the database name ends in `_test`. Each test runs in a rolled-back transaction (`join_transaction_mode="create_savepoint"`).
+  - `alembic.ini` gained `path_separator = os` (silences an Alembic deprecation warning).
+- **Run integration tests:** `docker compose -f compose.test.yaml up -d`, then `TEST_DATABASE_URL=postgresql+asyncpg://sidequest:sidequest@localhost:55432/sidequest_test pytest`.
+- **Manual check (Tim):** on the Pi, `bash update.sh` → log shows "Running upgrade 0001 -> 0002"; the bot still starts and `/sidequest about` still works. No Discord-facing changes in S2.
+- Next: S3 Time & recurrence.

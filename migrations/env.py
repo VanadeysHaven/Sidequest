@@ -9,6 +9,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from sidequest.config import DatabaseSettings
+from sidequest.db import models  # noqa: F401  # registers every table on Base.metadata
 from sidequest.db.base import Base
 
 config = context.config
