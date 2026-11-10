@@ -6,8 +6,8 @@
 
 | Seg | Title | Status | Branch |
 |---|---|---|---|
-| S1 | Foundation | 👀 review | `claude/s1-foundation` |
-| S2 | Data model | ⬜ todo | — |
+| S1 | Foundation | ✅ done | `claude/s1-foundation` |
+| S2 | Data model | ⏭️ next | — |
 | S3 | Time & recurrence | ⬜ todo | — |
 | S4 | Services | ⬜ todo | — |
 | S5 | Commands | ⬜ todo | — |
@@ -29,7 +29,7 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
 - Next: S1. S2 and S3 may run in either order after S1.
 - Same day: Tim reviewed the assumptions. Changes vs. the first draft: no date-only to-dos; monthly day-of-month rules (with last-day fallback); default timezone UTC; English-only input; 50 subtasks (two selects). Pi confirmed 64-bit (D30); no open assumptions. Root `CLAUDE.md` added.
 
-### 2026-11-10 — S1 Foundation built (waiting for Tim's review/commit)
+### 2026-11-10 — S1 Foundation built (done)
 - All 8 checklist items done on `claude/s1-foundation`. Uncommitted.
 - **Checks:** `ruff check .` clean · `ruff format --check .` clean · `pytest tests/unit`: 24 passed. Migrations smoke-tested against `compose.test.yaml` Postgres: `sidequest migrate` and bare `alembic current` both reach `0001`.
 - **Not verified by Claude:** `docker compose up --build` and anything in Discord (Tim's global rule: no build verification). See the manual checklist below.
@@ -50,4 +50,5 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   3. `docker compose up --build`: db healthy, log shows "Applying database migrations", dev bot: "Server-only mode: cleared global commands" + "Synced command(s) to guild …" per listed guild (production: "Synced 1 global command(s)"), "Logged in as …".
   4. `/sidequest about` in a listed guild (dev) or any server + DM (production): ephemeral reply, "Running since" shows a relative timestamp, and "Deployed" says unknown (no `configs/git.env` locally).
   5. On the Pi: `bash update.sh` → bot online, `/sidequest about` shows commit, branch and deploy time; run it a second time → `backups/backup-*.sql.gz` appears.
-- Next: S2 or S3 (either order), after Tim commits S1.
+- Done: Tim committed S1 as `30f90f4` and deployed on the Pi. Bot online, `/sidequest about` shows commit/branch/deploy time, and the second `update.sh` run wrote a backup. First deploy failed until `DATABASE_URL` and `POSTGRES_PASSWORD` matched; Postgres only applies `POSTGRES_PASSWORD` when the volume is first created (worth a line in the S7 runbook).
+- Next: S2 (S3 may go first instead; they are independent).
