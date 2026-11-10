@@ -54,7 +54,7 @@ To-dos can be one-time (untimed, or timed with a date + time) or repeating (dail
 | D13 | 2026-11-10 | SQLAlchemy 2.x (async) + asyncpg + Alembic migrations. | Claude |
 | D14 | 2026-11-10 | The DB is the single source of truth for schedules. The scheduler polls the DB (sleep until next due, capped at 60 s) and can be woken in-process. No in-memory job store. | Claude |
 | D15 | 2026-11-10 | Recurrence engine is hand-written and pure (zoneinfo only, no `dateutil.rrule`), heavily table-tested. | Claude |
-| D16 | 2026-11-10 | Python 3.13, `python:3.13-slim` base image. | Claude |
+| D16 | 2026-11-10 | ~~Python 3.13, `python:3.13-slim` base image.~~ Superseded by D31. | Claude |
 | D17 | 2026-11-10 | One-time to-dos are either **untimed** (no date, no time) or **timed** (date + time). A date without a time is rejected. (was A1) | Tim |
 | D18 | 2026-11-10 | When entering a timed to-do the date may be omitted: the next occurrence of that time is used (today if still ahead, else tomorrow). A date can always be given explicitly, including today. A date + time in the past is rejected. (was A2) | Tim |
 | D19 | 2026-11-10 | Personal to-dos have no assignees. (was A3) | Tim |
@@ -69,6 +69,9 @@ To-dos can be one-time (untimed, or timed with a date + time) or repeating (dail
 | D28 | 2026-11-10 | English only, for output **and** input (no Dutch keywords). (was A13) | Tim |
 | D29 | 2026-11-10 | Up to **50 subtasks** per to-do. Discord select menus hold 25 options, so subtask pickers use two selects; message text is trimmed to Discord's embed limits (see §4.11). (was A14) | Tim |
 | D30 | 2026-11-10 | The Pi runs 64-bit Raspberry Pi OS (`uname -m` = `aarch64`, `dpkg` = `arm64`); use standard `linux/arm64` images and wheels. (was A9) | Tim |
+| D31 | 2026-11-10 | Python **3.12** (`requires-python = ">=3.12,<3.13"`, `python:3.12-slim` base image), replacing D16. Tim's dev machine has 3.12, so checks run locally in a `.venv`. | Tim |
+| D32 | 2026-11-10 | `DEV_GUILD_ID` is replaced by `SYNC_GLOBAL` (bool, default true) + `SYNC_GUILD_IDS` (comma-separated). Never register a command both globally and in a guild (Discord then shows it twice). **`SYNC_GLOBAL=true`** (production) → global sync; every guild in `SYNC_GUILD_IDS` gets its guild commands deleted (cleanup after server-only mode). **`SYNC_GLOBAL=false`** (dev bot) → server-only mode: commands synced to the listed guilds (instant), global commands cleared, so DMs/user installs have none; config rejects it with an empty list. | Tim |
+| D33 | 2026-11-10 | The env file lives at `configs/.env` (git-ignored with the rest of `configs/`), not the repo root. Both compose services load it via `env_file`; `config.py` reads it for local runs. `configs/.env.example` is the tracked template (`.gitignore` uses `configs/*` + `!configs/.env.example`). | Tim |
 
 ---
 
@@ -152,10 +155,10 @@ Discord limits the code must respect when rendering:
 ### 5.1 Stack
 | Concern | Choice |
 |---|---|
-| Language | Python 3.13 |
+| Language | Python 3.12 (D31) |
 | Discord | discord.py 2.7.x, `Intents.none()` |
 | DB | PostgreSQL 17 (Docker), SQLAlchemy 2 async + asyncpg, Alembic |
-| Config | pydantic-settings (env vars / `.env`) |
+| Config | pydantic-settings (env vars / `configs/.env`, D33) |
 | Timezones | `zoneinfo` + `tzdata` pip package (slim images lack system tzdata) |
 | Packaging | `pyproject.toml` (hatchling, src layout), pip-tools → `requirements.txt`, `requirements-dev.txt` |
 | Quality | ruff (lint + format), pytest + pytest-asyncio |
@@ -184,7 +187,8 @@ Import rules (enforced by a test): `core` imports neither `discord` nor `sqlalch
 ### 5.3 Package layout
 ```
 pyproject.toml  requirements.txt  requirements-dev.txt
-Dockerfile  compose.yaml  compose.test.yaml  .env.example  update.sh
+Dockerfile  compose.yaml  compose.test.yaml  update.sh
+configs/.env.example        # template; real configs/.env + configs/git.env are git-ignored (D33)
 .gitattributes  .gitignore  .dockerignore
 scripts/compile-requirements.sh
 migrations/                 # alembic (env.py, versions/)

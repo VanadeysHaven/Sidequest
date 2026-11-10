@@ -58,7 +58,7 @@ Modals: create-with-details collects `details` (paragraph) and re-shows `title` 
 - Use Components V2 only if it simplifies layout; plain embeds are fine.
 
 ## Command sync
-On startup compute a hash of `tree` command payloads; global sync only if it differs from `app_meta['command_hash']` (avoids rate limits on every restart). `DEV_GUILD_ID` set → always sync to that guild.
+On startup compute a hash of `tree` command payloads; global sync only if it differs from `app_meta['command_hash']` (avoids rate limits on every restart). `SYNC_GLOBAL=false` → server-only mode: always sync to the `SYNC_GUILD_IDS` guilds, global commands stay cleared. `SYNC_GLOBAL=true` → hash-gated global sync, and the listed guilds always get their guild commands deleted (D32).
 
 ## Checklist
 1. Actor builder, error handler, effect executor, render helpers — main session.

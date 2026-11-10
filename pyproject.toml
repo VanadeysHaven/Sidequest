@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sidequest"
+version = "0.1.0"
+description = "Discord to-do bot with shared server lists and personal lists."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "discord.py>=2.7,<3",
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "asyncpg",
+    "alembic",
+    "pydantic-settings>=2",
+    "tzdata",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "pip-tools",
+]
+
+[project.scripts]
+sidequest = "sidequest.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sidequest"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+extend-exclude = ["docs"]  # design docs contain illustrative, not runnable, code
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]

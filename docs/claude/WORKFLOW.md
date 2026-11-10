@@ -50,7 +50,7 @@ Rules for subagent prompts:
 
 ## 5. Code conventions
 
-- Python 3.13, full type hints, `ruff` lint + format (line length 100).
+- Python 3.12 (D31), full type hints, `ruff` lint + format (line length 100).
 - Layering (BRIEF §5.2): `core` imports no `discord`/`sqlalchemy`; `services`/`db` import no `discord`. A unit test (`tests/unit/test_layering.py`) enforces this by scanning imports.
 - All datetimes are timezone-aware UTC internally. Get "now" only through `core.clock.Clock` so tests can control it.
 - User-facing points in time go through `core.discord_time` only. Wall-clock text (rule descriptions) uses `HH:MM`.
@@ -64,7 +64,7 @@ Rules for subagent prompts:
 - `ruff check .` and `ruff format --check .`
 - `pytest tests/unit`
 - `pytest tests/integration` against the test Postgres (`docker compose -f compose.test.yaml up -d`, `TEST_DATABASE_URL`). If Docker isn't available, say so in the report; never fake or skip silently.
-- Claude can't use Discord itself: each segment that touches Discord ends with a **manual test checklist** for Tim (dev bot, `DEV_GUILD_ID` for instant command sync).
+- Claude can't use Discord itself: each segment that touches Discord ends with a **manual test checklist** for Tim (dev bot with `SYNC_GLOBAL=false` + `SYNC_GUILD_IDS` for instant command sync).
 
 ## 7. Documentation rules
 

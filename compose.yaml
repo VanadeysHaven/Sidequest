@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: sidequest-db
+    # POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB come from configs/.env.
+    env_file:
+      - path: configs/.env
+        required: true
+    volumes:
+      - sidequest-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  bot:
+    build: .
+    container_name: sidequest-bot
+    env_file:
+      - path: configs/.env
+        required: true
+      - path: configs/git.env
+        required: false
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  sidequest-db-data:
