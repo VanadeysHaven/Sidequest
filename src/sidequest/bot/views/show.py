@@ -83,17 +83,22 @@ class ShowView(BaseView):
         actor = adapter.actor_from(interaction)
         async with adapter.uows(interaction)() as uow:
             todo = await todos.get(uow, actor, self.todo_id)
-        await interaction.response.send_modal(DetailsModal(todo.id, todo.details))
+        # Saving refreshes this message, so the new details show right away.
+        await interaction.response.send_modal(
+            DetailsModal(todo.id, todo.details, on_saved=self._refresh)
+        )
 
     async def _refresh(
         self, interaction: discord.Interaction, todo: TodoView, content: str | None = None
     ) -> None:
         self.build(todo)
+        # After a timeout (e.g. a slow details edit) the view no longer listens: drop it.
+        live = bool(self.children) and not self.is_finished()
         await interaction.edit_original_response(
             content=content,
             embed=render.todo_embed(todo),
-            view=self if self.children else None,
+            view=self if live else None,
             allowed_mentions=adapter.NO_MENTIONS,
         )
-        if not self.children:
+        if not live:
             self.stop()

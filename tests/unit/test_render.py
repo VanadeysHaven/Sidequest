@@ -178,7 +178,7 @@ def test_created_text_server_lists_assignees() -> None:
 
 def test_done_text_for_finished_one_time_todo() -> None:
     todo = make_todo(status=TodoStatus.DONE)
-    assert render.done_text(todo) == "✅ **Buy milk** is done."
+    assert render.done_text(todo) == "✅ Checked off **Buy milk**."
 
 
 def test_done_text_for_recurring_todo_shows_next_occurrence() -> None:
@@ -189,8 +189,17 @@ def test_done_text_for_recurring_todo_shows_next_occurrence() -> None:
         next_due_at=START,
     )
     result = render.done_text(todo)
-    assert result.startswith("✅ Checked off **Buy milk** for now.")
-    assert "<t:" in result
+    assert result.startswith("✅ Checked off **Buy milk**. Next: <t:")
+
+
+def test_done_text_for_recurring_todo_without_next_occurrence() -> None:
+    todo = make_todo(
+        kind=TodoKind.RECURRING,
+        rule=DailyRule(times=["09:00"]),
+        rule_description="Every day at 09:00 (UTC)",
+        next_due_at=None,
+    )
+    assert render.done_text(todo) == "✅ Checked off **Buy milk**."
 
 
 # --- subtask options ---------------------------------------------------------------------
