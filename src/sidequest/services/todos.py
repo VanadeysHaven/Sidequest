@@ -13,7 +13,7 @@ from sidequest.core.errors import (
     NotFound,
     ReminderChannelNotSet,
 )
-from sidequest.core.limits import ASSIGNEES_MAX, SELECT_LABEL_MAX
+from sidequest.core.limits import ASSIGNEES_MAX
 from sidequest.core.recurrence import RecurrenceRule
 from sidequest.core.timeparse import Timed, resolve_due
 from sidequest.core.tz import get_zone
@@ -194,8 +194,10 @@ async def list_todos(
 
 async def autocomplete(
     uow: Uow, actor: Actor, query: str, scope: Scope | None = None, limit: int = 25
-) -> list[tuple[int, str]]:
-    """(id, label) of open to-dos whose title contains `query`; prefix matches first."""
+) -> list[tuple[int, str, Scope]]:
+    """(id, title, scope) of open to-dos whose title contains `query`; prefix matches first.
+
+    The adapter builds the label (and cuts it to its UI's limit)."""
     q = query.strip()
     escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     try:
@@ -210,15 +212,7 @@ async def autocomplete(
         Todo.created_at.desc(),
         Todo.id.desc(),
     ).limit(limit)
-    result: list[tuple[int, str]] = []
-    for todo_id, title, todo_scope in await uow.session.execute(stmt):
-        label = f"(personal) {title}" if scope is None and todo_scope == Scope.PERSONAL else title
-        result.append((todo_id, _cut(label, SELECT_LABEL_MAX)))
-    return result
-
-
-def _cut(text: str, limit: int) -> str:
-    return text if len(text) <= limit else f"{text[: limit - 1]}…"
+    return [(todo_id, title, Scope(s)) for todo_id, title, s in await uow.session.execute(stmt)]
 
 
 # --- change ------------------------------------------------------------------------------

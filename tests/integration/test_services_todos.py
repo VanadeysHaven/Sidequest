@@ -251,3 +251,18 @@ async def test_edit_keeps_details_unless_passed_and_none_clears_them(uow: Uow) -
 
     cleared = await todos.edit(uow, actor, tid, TodoPatch(details=None))
     assert cleared.value.details is None
+
+
+async def test_autocomplete_returns_scope_and_prefix_matches_first(uow: Uow) -> None:
+    actor = member(OWNER, GUILD_A)
+    await todos.create_once(uow, actor, scope=Scope.SERVER, title="buy milk")
+    await todos.create_once(uow, actor, scope=Scope.PERSONAL, title="milk the cow")
+    await todos.create_once(uow, member(OTHER, GUILD_A), scope=Scope.PERSONAL, title="milk")
+
+    found = await todos.autocomplete(uow, actor, "milk")
+
+    assert [(title, scope) for _, title, scope in found] == [
+        ("milk the cow", Scope.PERSONAL),
+        ("buy milk", Scope.SERVER),
+    ]
+    assert await todos.autocomplete(uow, member(OWNER, None), "milk", Scope.SERVER) == []

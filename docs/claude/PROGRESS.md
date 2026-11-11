@@ -9,9 +9,9 @@
 | S1 | Foundation | ✅ done | `claude/s1-foundation` |
 | S2 | Data model | ✅ done | `claude/s2-data-model` |
 | S3 | Time & recurrence | ✅ done | `claude/s3-time-and-recurrence` |
-| S4 | Services | 👀 review | `claude/s4-services` |
-| S5 | Commands | ⏭️ next | — |
-| S6 | Reminders | ⬜ todo | — |
+| S4 | Services | ✅ done | `claude/s4-services` |
+| S5 | Commands | 👀 review | `claude/s5-commands` |
+| S6 | Reminders | ⏭️ next | — |
 | S7 | Ops & hardening | ⬜ todo | — |
 
 Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's review/commit · ✅ done
@@ -116,5 +116,47 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - `eager_defaults` on `_Timestamps`: `created_at` is fetched via `RETURNING` on insert, so views can read it after a flush without an async lazy load. No migration change.
 - **D34 (same session, Tim):** service models are strict + frozen pydantic (`services/model.py: StrictModel`, also `extra="forbid"`). Converted: all DTOs in `services/dto.py`, `TodoPatch` (moved from `todos.py` into `dto.py`), `Actor`, `Outcome`, `DeleteMessage`. Construct them with **keyword arguments only** (`Outcome(value=view)`, `Actor(user_id=…, guild_id=…, can_manage_guild=…, origin=…)`). `Uow` stays a dataclass: it holds a session and a clock, not data. `TodoPatch` uses `model_fields_set`: `TodoPatch(details=None)` clears, leaving `details` out keeps them. Strict means no coercion: e.g. `DueInput(time="10:00")` fails; S5 must parse with `core.timeparse` first. +8 tests (`tests/unit/test_service_models.py`, one edit test) → **318 passed**.
 - **Manual check (Tim):** none in Discord; S4 adds no commands. `bash update.sh` on the Pi should behave as before (no migration).
+- Done: Tim committed S4 as `aadcf55`.
 - Next: S5 Commands.
+
+### 2026-11-11 — S5 Commands built (waiting for review)
+- All 7 checklist items done on `claude/s5-commands`. Uncommitted.
+- **Checks:** `ruff check .` clean · `ruff format --check .` clean · `pytest` with `TEST_DATABASE_URL`: **388 passed** (+70: render, options, adapter, sync hashing, autocomplete). Nothing tested in Discord itself (see the manual checklist).
+- **Files:** new: `bot/{adapter,errors,render,autocomplete,options}.py`, `bot/commands/{common,todo,todo_list,todo_view,todo_manage,todo_edit,repeat,subtask,settings,admin}.py`, `bot/views/{__init__,base,modals,show,upcoming,listing,assign,confirm}.py`, `scheduler/{__init__,signal}.py`, `services/meta.py`, `tests/unit/test_{render,options,adapter}.py`. Changed: `bot/client.py`, `bot/commands/about.py`, `services/todos.py`, `tests/unit/test_command_sync.py`, `tests/integration/test_services_todos.py`.
+- **How it fits together:** `SidequestClient(settings, clock, deps)`; `BotDeps(uows, signal, command_hashes, engine)` sits on the client, and commands reach it via `adapter.deps(interaction)`. Command pattern: `defer` → `actor_from` → service call(s) + `collect_notes` in one `uows()` block → `apply(interaction, outcome)` (effects + scheduler wake) → `reply(...)`. Errors are raised, never caught: `tree.error(report_error)`, `BaseView.on_error` and `BaseModal.on_error` show `SidequestError.message` ephemerally and log everything else with a traceback.
+- **For S6:** `scheduler/signal.py` has `ScheduleSignal.wake()` and `await wait(seconds) -> bool` (in-process `asyncio.Event`); the loop should use `client.deps.signal`. `render.todo_embed(todo)` and `render.subtask_option_pages(todo)` are the shared reminder renderers (kept within 6000 chars, 1–2 selects). `adapter.run_effects(client, effects)` executes `DeleteMessage`.
+- **Deviations / decisions:**
+  - `/sidequest channel` is a subcommand of the existing `/sidequest` group. Discord only allows install contexts and default permissions on top-level commands, so it can't be guild-only or hidden from non-admins. It checks at runtime instead: guild-installed, Manage Server (or Administrator), text/news channel. Non-admins see it but get a clear error. Alternative if Tim prefers: a separate top-level command with `default_permissions(manage_guild=True)`.
+  - Commands are built by factory functions (`build_todo_group()`, `add_command()`, …) that create fresh command objects, not class-based groups. Reason: discord.py's `Group` only collects commands from the class's own `__dict__`, so one group can't be spread over several files. Fresh objects also let tests create several clients.
+  - `todos.autocomplete` now returns `(id, title, scope)` instead of `(id, label)`. The adapter builds the `[S]`/`[P]` label and cuts it to 100 chars (`render.autocomplete_label`). New integration test.
+  - `todo`/`subtask` options are **string** options with autocomplete (value = id as text). Discord's client only allows digits in integer options, so typing a title to search would be impossible. Free text that isn't an id → "Pick a to-do from the list that appears while you type."
+  - `/todo edit`: for a timed one-time to-do, a `date` without `time` keeps the current wall-clock time (in the new timezone if one is given). Rule parts are checked against the rule type (`options.edited_rule`); switching type is refused with "delete the to-do and add it again".
+  - `/todo upcoming` without `scope` in a server asks with buttons: Server list / Personal list / Both (D35, Tim; `views/upcoming.py: ScopePickView`). The picked view replaces the prompt in the same message. In DMs it shows the personal list directly.
+  - Create commands validate pure inputs (time/date format, timezone, scope, the rule) **before** a `details:True` modal opens, so a typo doesn't throw away typed details. `today`/`tomorrow` resolve in the to-do's timezone (override → user → default).
+  - `/todo list post:true` is deferred publicly; one-time notes go in a separate ephemeral follow-up. Anyone can page a public list (it re-queries the same server list with the presser's actor).
+  - Details text keeps its markdown (only mentions are escaped); titles and subtasks have markdown and mentions escaped. All command responses use `AllowedMentions.none()`.
+  - Notes (timezone hint, DM failure) are collected after the service call, so a failed command doesn't use up the one-time hint. Autocomplete never consumes them; `/sidequest about` doesn't show them.
+  - Select labels can't render Discord timestamps (C5), so the upcoming select uses "N. title" matching the numbered embed rows; subtask selects and embed lines are numbered the same way.
+  - Command sync hash: SHA-256 of the canonical JSON of the global payload, stored in `app_meta['command_hash']` via `services/meta.py`. Server-only mode hashes the empty global payload, so global commands are cleared once, not on every start. Guild syncs and cleanup always run. A hash read/write failure logs a warning and falls back to syncing.
+  - `ScheduleSignal` was created now (BRIEF §5.3 `scheduler/signal.py`) so S5 can wake the scheduler; S6 owns the loop.
+- **Manual test checklist (Tim, dev bot with `SYNC_GLOBAL=false`):**
+  - [ ] Startup log: "Server-only mode: cleared global commands" on the first start, "Global commands unchanged; skipped sync" on the second; guild sync both times.
+  - [ ] `/sidequest channel` as admin posts a confirmation in that channel; a non-admin is refused; a channel the bot can't post in gives the permissions hint.
+  - [ ] `/settings timezone` autocomplete finds `Europe/Amsterdam`; setting it works; without an argument it shows the current one.
+  - [ ] `/todo add` untimed, time-only, explicit `today` + time, date+time; date-only rejected; past time rejected; `9pm` rejected with the 24h hint.
+  - [ ] Server timed to-do before `/sidequest channel` is set → clear error.
+  - [ ] `/todo repeat monthly-day day:31` → reply notes the last-day fallback; next occurrence right.
+  - [ ] `/todo repeat weekly days:mon,thu times:12:00` → description reads correctly, next-occurrence timestamp right.
+  - [ ] 30 subtasks (`/todo subtask add` with `;`) → two selects in `/todo show`; ticking updates the embed; no embed error.
+  - [ ] `/todo add details:True` opens a modal; multi-line text shows in `/todo show`; the "Edit details" button and `/todo details` prefill it; emptying it removes the details.
+  - [ ] Personal to-do created in a server is visible in DMs with the bot, and not to another user.
+  - [ ] `/todo upcoming` in a server without `scope` → Server / Personal / Both buttons; each shows the right items. In DMs → personal list straight away.
+  - [ ] `/todo upcoming` → check one off early → it disappears and the list refreshes.
+  - [ ] `/todo assign` (select prefilled); a non-assignee without Manage Server can't edit, assign or delete.
+  - [ ] `/todo list` with >10 to-dos pages with Prev/Next; `post:true` posts publicly; `post:true scope:Personal` is refused.
+  - [ ] `/todo edit` title / time / `times`; an option for another rule type gives the "delete and add again" message.
+  - [ ] `/todo delete` → Delete removes it, Cancel keeps it.
+  - [ ] Autocomplete on `todo` options is fast and shows `[S]` / `[P]`.
+  - [ ] A user without a timezone sees the one-time UTC hint on their first command.
+- Next: S6 Reminders.
 

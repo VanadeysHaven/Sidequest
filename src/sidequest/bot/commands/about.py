@@ -6,6 +6,7 @@ import discord
 from discord import app_commands
 
 from sidequest import __version__
+from sidequest.bot.commands.admin import channel_command
 from sidequest.config import Settings
 from sidequest.core.discord_time import ts
 
@@ -32,6 +33,9 @@ def about_text(settings: Settings, started_at: datetime) -> str:
 class SidequestGroup(app_commands.Group, name="sidequest", description="About Sidequest"):
     def __init__(self, settings: Settings, started_at: datetime) -> None:
         super().__init__()
+        # Subcommands can't have their own install contexts or default permissions, so
+        # `channel` checks "guild-installed" and Manage Server at runtime.
+        self.add_command(channel_command())
         self.settings = settings
         self.started_at = started_at
 
