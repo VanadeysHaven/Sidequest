@@ -212,6 +212,7 @@ Fully possible. With `Intents.none()` the bot still receives every slash command
 - Post to channels via `client.get_partial_messageable(channel_id)`; delete via partial messages. DMs via `client.create_dm(discord.Object(user_id))`.
 - When an admin sets the reminder channel, validate it by posting a short confirmation message there (proves the bot can send).
 - **DM limitation:** Discord only lets a bot DM a user it shares a server with (and who allows DMs). Users with only a personal list must share at least one server with the bot. A failed DM is recorded and the user is warned on their next command (S6). Verify whether a user-install alone suffices during S6.
+  - *S6 (2026-11-11):* not verified yet: Claude can't use Discord, so it's on Tim's manual checklist (a test account that has the app user-installed and shares no server with the bot). Until then, assume a shared server is required. The code doesn't depend on the answer: a refused DM is recorded as `dm_closed` and the user is warned on their next command (D26).
 
 ### 5.5 Scheduling model
 - `occurrences` table holds concrete reminder instances. A timed one-time to-do has one; a repeating to-do always has exactly one **pending** future occurrence (materialized one at a time).

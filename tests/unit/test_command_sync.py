@@ -38,6 +38,7 @@ def make_deps(command_hashes: MemoryHashStore) -> BotDeps:
         uows=UowFactory(async_sessionmaker(), clock),
         signal=ScheduleSignal(),
         command_hashes=command_hashes,
+        run_scheduler=False,
     )
 
 

@@ -11,6 +11,7 @@ from sidequest.core.enums import OccurrenceStatus, Scope, TodoKind, TodoStatus
 from sidequest.core.errors import InvalidOperation, NotFound
 from sidequest.db.models import GuildSettings, Occurrence, Todo, UserSettings
 from sidequest.services import _common as c
+from sidequest.services import subtasks
 from sidequest.services.actor import Actor
 from sidequest.services.dto import DueReminder, TodoView, UpcomingItem
 from sidequest.services.effects import DeleteMessage, Effect, Outcome
@@ -22,9 +23,16 @@ LATE_AFTER = timedelta(minutes=2)
 # `mark_failed` reasons. `dm_closed` also warns the user on their next command (D26).
 FAILURE_DM_CLOSED = "dm_closed"
 FAILURE_NO_CHANNEL = "no_channel"
-FAILURE_CHANNEL_UNAVAILABLE = "channel_unavailable"
+"""The server never set a reminder channel."""
+FAILURE_FORBIDDEN = "forbidden"
+"""The bot may not post in the reminder channel."""
+FAILURE_CHANNEL_GONE = "channel_gone"
+"""The reminder channel was deleted."""
+FAILURE_ERROR = "error"
+"""Anything else (Discord error, bug); details are in the log."""
 
 OCCURRENCE_NOT_FOUND = "That reminder doesn't exist (or isn't on a list you can see here)."
+REMINDER_CLOSED = "That reminder is closed."
 _SYSTEM = Actor.system()
 
 
@@ -94,6 +102,30 @@ async def complete_occurrence(uow: Uow, actor: Actor, occurrence_id: int) -> Out
     view = await c.view_of(uow, actor, todo)
     await uow.session.commit()
     return Outcome(value=view, effects=effects, changed_schedule=changed)
+
+
+async def tick_subtasks(
+    uow: Uow, actor: Actor, occurrence_id: int, done_ids: set[int], within: set[int]
+) -> Outcome[TodoView]:
+    """Subtask select on a reminder: tick exactly `done_ids` among `within` (one select page).
+
+    Only while that reminder is the current one (sent, not yet checked off or missed).
+    """
+    todo, occ, _ = await _lock_occurrence(uow, actor, occurrence_id)
+    if occ.status != OccurrenceStatus.SENT or todo.status != TodoStatus.OPEN:
+        raise InvalidOperation(REMINDER_CLOSED)
+    return await subtasks.set_done(uow, actor, todo.id, done_ids, within)
+
+
+async def is_live(uow: Uow, occurrence_id: int) -> bool:
+    """Whether a reminder message for this occurrence should still be up: it was sent and
+    is neither checked off nor missed, and its to-do is open."""
+    status = await uow.session.scalar(
+        select(Occurrence.status)
+        .join(Todo, Todo.id == Occurrence.todo_id)
+        .where(Occurrence.id == occurrence_id, Todo.status == TodoStatus.OPEN)
+    )
+    return status == OccurrenceStatus.SENT
 
 
 # --- scheduler ---------------------------------------------------------------------------

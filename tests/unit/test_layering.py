@@ -11,6 +11,8 @@ LAYER_RULES: list[tuple[str, set[str]]] = [
     ("core", {"discord", "sqlalchemy", "sidequest.db"}),
     ("services", {"discord"}),
     ("db", {"discord"}),
+    # The scheduler talks to Discord only through the Notifier protocol (the bot implements it).
+    ("scheduler", {"discord", "sidequest.bot"}),
 ]
 
 

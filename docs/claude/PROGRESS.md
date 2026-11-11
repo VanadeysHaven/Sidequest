@@ -11,7 +11,7 @@
 | S3 | Time & recurrence | ✅ done | `claude/s3-time-and-recurrence` |
 | S4 | Services | ✅ done | `claude/s4-services` |
 | S5 | Commands | ✅ done | `claude/s5-commands` |
-| S6 | Reminders | ⏭️ next | — |
+| S6 | Reminders | 👀 review | `claude/s6-reminders` |
 | S7 | Ops & hardening | ⬜ todo | — |
 
 Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's review/commit · ✅ done
@@ -158,6 +158,38 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - [ ] `/todo delete` → Delete removes it, Cancel keeps it.
   - [ ] Autocomplete on `todo` options is fast and shows `[S]` / `[P]`.
   - [ ] A user without a timezone sees the one-time UTC hint on their first command.
+  - **S6 reminders** (added 2026-11-11):
+  - [ ] Server to-do at now+2 min with two assignees → posted in the reminder channel, both pinged (nobody else, no roles); the embed shows details, due time, subtasks.
+  - [ ] Someone who isn't an assignee can press Done (D3) → ephemeral "Checked off", the reminder message disappears.
+  - [ ] Personal timed to-do → arrives as a DM with a working Done button.
+  - [ ] Daily to-do left unchecked → the next occurrence deletes the old message and posts a new one.
+  - [ ] Subtask select on a reminder ticks items and the embed updates; with 30 subtasks each select only changes its own page; on a repeating to-do they're reset for the next occurrence.
+  - [ ] `/todo upcoming` → check off before it's due → that reminder never arrives.
+  - [ ] `/todo delete` while its reminder is up → the reminder message is deleted.
+  - [ ] Restart the bot (`docker compose restart bot`) → an old reminder's Done button and select still work.
+  - [ ] Stop the bot past a due time, start it → one reminder, marked "Late — was due …" (a daily to-do down for several days: still only one).
+  - [ ] Turn off "Allow DMs from server members" → a personal reminder fails → warning on the next command.
+  - [ ] **DM verification (BRIEF §5.4):** a test account that has the app user-installed and shares **no** server with the bot creates a personal timed to-do in DMs. Does the reminder DM arrive? Tell Claude the answer so it can be recorded.
+  - [ ] Heartbeat: `docker compose exec bot cat /tmp/sidequest-heartbeat` shows a recent UTC time.
+  - [ ] All times show as Discord timestamps.
 - Done: Tim committed S5 as `4cbcc59`. Tim hasn't run the checklist above yet; S5 and S6 get tested together after S6.
 - Next: S6 Reminders. **S6: add your manual checks to the open S5 checklist above** (Tim's choice, one combined test pass) instead of starting a separate list.
 
+### 2026-11-11 — S6 Reminders built (waiting for review)
+- All checklist items done on `claude/s6-reminders`, except the DM verification, which needs Discord (on the checklist above). Uncommitted.
+- **Checks:** `ruff check .` clean · `ruff format --check .` clean · `pytest` with `TEST_DATABASE_URL`: **414 passed** (+26: 9 scheduler loop tests with `FakeNotifier` + real Postgres, 7 for the new services, 9 reminder render/view tests, layering now also covers `scheduler`). Nothing tested in Discord itself.
+- **Files:** new: `scheduler/{loop,notifier}.py`, `bot/notifier.py`, `bot/views/reminder.py`, `tests/support/notifier.py`, `tests/integration/test_{scheduler,services_reminders}.py`, `tests/unit/test_reminder_render.py`. Changed: `services/occurrences.py` (`tick_subtasks`, `is_live`, failure reasons), `bot/render.py` (`reminder_embed`, `reminder_pings`), `bot/client.py` (dynamic items, starts/stops the scheduler), `bot/adapter.py` (`BotDeps.run_scheduler`), `tests/unit/{test_command_sync,test_layering}.py`, `docs/claude/BRIEF.md` §5.4.
+- **How it fits together:** `setup_hook` registers `DoneButton`/`SubtaskSelect` (`add_dynamic_items`), syncs commands, then starts `Scheduler(uows, DiscordNotifier(client), signal, clock).run()` as a background task; `close()` cancels it. The scheduler only knows the `Notifier` protocol (`post` → `Posted | Failed`, `execute(effects)`), so it has no Discord imports (enforced by the layering test).
+- **Deviations / decisions:**
+  - **Recovery runs every iteration**, not only at startup (still only for reminders claimed > 60 s ago). Reason: after a crash, Docker restarts the bot within seconds, so a startup-only check with a 60 s threshold would skip exactly the reminders the crash left behind. The loop is sequential, so nothing of its own is in flight during recovery.
+  - Sleep is clamped to **1–60 s** when nothing was claimed: an occurrence that is due but locked by a user's edit (`SKIP LOCKED`) would otherwise make the loop spin.
+  - Failure reasons: `no_channel`, `forbidden`, `channel_gone`, `dm_closed`, `error` (any other exception; details in the log). S4's unused `channel_unavailable` is replaced by `forbidden` + `channel_gone`. Transient Discord errors are not retried beyond what discord.py does: the occurrence is marked `failed`.
+  - If a to-do is deleted while its reminder is being posted, `attach_message` raises `NotFound` and the loop deletes the just-posted message.
+  - **Heartbeat:** `<tempdir>/sidequest-heartbeat` (`/tmp/…` in the container), ISO UTC time, written only after a **successful** iteration, so a broken DB also makes it go stale. Not configurable yet; S7 can add a setting if needed.
+  - Reminder components build their `Actor` from `interaction.guild_id` directly (`views/reminder.py: reminder_actor`), not `adapter.actor_from`: only the bot posts reminders, so a reminder in a server proves the bot is installed there, and a component interaction may not carry the guild install owner that `is_guild_integration()` checks.
+  - Done / select on a stale reminder (already checked off, missed, or the to-do deleted): an ephemeral error, and the message is deleted only if `occurrences.is_live` says the reminder is over. A "not visible to you" `NotFound` never deletes it.
+  - The subtask select takes `within` from the options on the message itself (rebuilt by discord.py from the message), so a subtask added after posting can't be unticked by a select that doesn't show it. After a tick the message is re-rendered from the current to-do, so new subtasks appear.
+  - DynamicItem callbacks are wrapped in `try/except → report_error`, because discord.py only logs exceptions from dynamic items and the user would see nothing.
+  - DM verification (user-install without a shared server) is not done: Claude can't use Discord. Recorded as open in BRIEF §5.4 and on the checklist; the code handles both answers.
+- **Manual check (Tim):** the S6 items are added to the open S5 checklist above (one combined test pass, as agreed).
+- Next: after Tim's review/commit and the combined S5+S6 test pass → S7 Ops & hardening.

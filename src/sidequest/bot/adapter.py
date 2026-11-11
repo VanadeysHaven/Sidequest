@@ -75,6 +75,8 @@ class BotDeps:
     command_hashes: CommandHashStore
     engine: AsyncEngine | None = None
     """Disposed when the client closes (None in tests)."""
+    run_scheduler: bool = True
+    """Start the reminder loop in `setup_hook` (off in tests that only exercise the client)."""
 
 
 class _HasDeps(Protocol):

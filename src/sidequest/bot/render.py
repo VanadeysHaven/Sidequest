@@ -16,7 +16,14 @@ from sidequest.core.limits import (
     SELECT_LABEL_MAX,
     SELECT_OPTIONS_MAX,
 )
-from sidequest.services.dto import ListFilter, Page, SubtaskView, TodoView, UpcomingItem
+from sidequest.services.dto import (
+    ListFilter,
+    OccurrenceView,
+    Page,
+    SubtaskView,
+    TodoView,
+    UpcomingItem,
+)
 
 EMBED_TITLE_MAX = 256
 FIELD_VALUE_MAX = 1024
@@ -161,6 +168,46 @@ def todo_embed(todo: TodoView) -> discord.Embed:
     if todo.scope == Scope.SERVER and todo.assignee_ids:
         embed.add_field(name="Assignees", value=mentions(todo.assignee_ids), inline=False)
     embed.set_footer(text=f"{'Server' if todo.scope == Scope.SERVER else 'Personal'} to-do")
+
+    for name, value in _subtask_fields(todo.subtasks, EMBEDS_TOTAL_MAX - len(embed)):
+        embed.add_field(name=name, value=value, inline=False)
+    return embed
+
+
+# --- reminders ---------------------------------------------------------------------------
+
+
+def reminder_pings(todo: TodoView) -> str | None:
+    """Message content of a server reminder: the assignees' mentions (they do ping)."""
+    if todo.scope != Scope.SERVER or not todo.assignee_ids:
+        return None
+    return " ".join(f"<@{user_id}>" for user_id in todo.assignee_ids)
+
+
+def reminder_embed(todo: TodoView, occurrence: OccurrenceView) -> discord.Embed:
+    """The reminder message: details first, due time (late note), repeat rule, then as many
+    subtasks as fit in Discord's 6000-char embed budget."""
+    embed = discord.Embed(
+        title=cut(f"⏰ {esc(todo.title)}", EMBED_TITLE_MAX),
+        description=(
+            cut(discord.utils.escape_mentions(todo.details), EMBED_DESCRIPTION_MAX)
+            if todo.details
+            else None
+        ),
+    )
+    due = occurrence.due_at
+    if occurrence.late:
+        embed.add_field(
+            name="Due", value=f"{ts(due, 'F')}\nLate — was due {ts(due, 'R')}", inline=False
+        )
+    else:
+        embed.add_field(name="Due", value=ts_due(due), inline=False)
+    if todo.kind == TodoKind.RECURRING and todo.rule_description:
+        embed.add_field(name="Repeats", value=todo.rule_description, inline=False)
+    embed.set_footer(
+        text=f"{'Server' if todo.scope == Scope.SERVER else 'Personal'} reminder · press Done "
+        "when it's done"
+    )
 
     for name, value in _subtask_fields(todo.subtasks, EMBEDS_TOTAL_MAX - len(embed)):
         embed.add_field(name=name, value=value, inline=False)

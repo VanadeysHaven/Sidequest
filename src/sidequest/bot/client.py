@@ -1,5 +1,7 @@
 """Discord client: gateway with no intents; everything arrives as interactions (D11)."""
 
+import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -13,9 +15,12 @@ from sidequest.bot.commands.about import SidequestGroup
 from sidequest.bot.commands.settings import build_settings_group
 from sidequest.bot.commands.todo import build_todo_group
 from sidequest.bot.errors import report_error
+from sidequest.bot.notifier import DiscordNotifier
+from sidequest.bot.views.reminder import DoneButton, SubtaskSelect
 from sidequest.config import Settings
 from sidequest.core.clock import Clock, SystemClock
 from sidequest.db.session import create_engine, create_sessionmaker
+from sidequest.scheduler.loop import Scheduler
 from sidequest.scheduler.signal import ScheduleSignal
 from sidequest.services.uow import UowFactory
 
@@ -37,13 +42,26 @@ class SidequestClient(discord.Client):
         self.started_at = clock.now()
         self.tree = app_commands.CommandTree(self)
         self.tree.error(report_error)
+        self._scheduler_task: asyncio.Task[None] | None = None
 
     async def setup_hook(self) -> None:
         self.tree.add_command(SidequestGroup(self.settings, self.started_at))
         self.tree.add_command(build_todo_group())
         self.tree.add_command(build_settings_group())
+        # Reminder buttons/selects: matched by custom_id, so they survive restarts.
+        self.add_dynamic_items(DoneButton, SubtaskSelect)
 
         await self._sync_commands()
+
+        if self.deps.run_scheduler:
+            self._start_scheduler()
+
+    def _start_scheduler(self) -> None:
+        """Runs in the background; REST calls work from here on, before the gateway is up."""
+        scheduler = Scheduler(self.deps.uows, DiscordNotifier(self), self.deps.signal, self.clock)
+        task = asyncio.create_task(scheduler.run(), name="sidequest-scheduler")
+        task.add_done_callback(_scheduler_stopped)
+        self._scheduler_task = task
 
     async def _sync_commands(self) -> None:
         """Register commands with Discord (D32). Never both global and guild copies: a guild
@@ -109,9 +127,21 @@ class SidequestClient(discord.Client):
         log.info("Logged in as %s (id %s)", self.user, self.user.id)
 
     async def close(self) -> None:
+        if self._scheduler_task is not None:
+            self._scheduler_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._scheduler_task
+            self._scheduler_task = None
         await super().close()
         if self.deps.engine is not None:
             await self.deps.engine.dispose()
+
+
+def _scheduler_stopped(task: asyncio.Task[None]) -> None:
+    if task.cancelled():
+        log.info("Scheduler stopped")
+    elif (exc := task.exception()) is not None:
+        log.critical("Scheduler crashed; no more reminders until restart", exc_info=exc)
 
 
 def build_deps(settings: Settings, clock: Clock) -> BotDeps:
