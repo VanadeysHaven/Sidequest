@@ -90,7 +90,7 @@ class UpcomingView(BaseView):
             items = await load(uow, actor, self.scope, self.days)
         self.build(items)
         await interaction.edit_original_response(
-            content=f"✅ Checked off **{render.esc(todo.title)}**.",
+            content=render.done_text(todo),
             embed=render.upcoming_embed(items, self.days, LIMIT),
             view=self if self.children else None,
             allowed_mentions=adapter.NO_MENTIONS,

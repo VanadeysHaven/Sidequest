@@ -94,10 +94,11 @@ def created_text(todo: TodoView) -> str:
 
 
 def done_text(todo: TodoView) -> str:
-    if todo.status == TodoStatus.DONE:
-        return f"✅ **{esc(todo.title)}** is done."
-    nxt = f" Next: {ts_due(todo.next_due_at)}" if todo.next_due_at else ""
-    return f"✅ Checked off **{esc(todo.title)}** for now.{nxt}"
+    """The reply after checking something off (same wording everywhere, D37)."""
+    text = f"✅ Checked off **{esc(todo.title)}**."
+    if todo.kind == TodoKind.RECURRING and todo.next_due_at is not None:
+        text += f" Next: {ts_due(todo.next_due_at)}"
+    return text
 
 
 # --- detail embed ------------------------------------------------------------------------

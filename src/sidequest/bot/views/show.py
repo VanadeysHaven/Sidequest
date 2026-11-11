@@ -70,7 +70,14 @@ class ShowView(BaseView):
         async with adapter.uows(interaction)() as uow:
             out = await todos.complete(uow, actor, self.todo_id)
         todo = await adapter.apply(interaction, out)
-        await self._refresh(interaction, todo, content=render.done_text(todo))
+        # D37: the to-do disappears; only the confirmation (and next occurrence) is left.
+        await interaction.edit_original_response(
+            content=render.done_text(todo),
+            embed=None,
+            view=None,
+            allowed_mentions=adapter.NO_MENTIONS,
+        )
+        self.stop()
 
     async def _edit_details(self, interaction: discord.Interaction) -> None:
         actor = adapter.actor_from(interaction)
