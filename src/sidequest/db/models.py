@@ -66,6 +66,10 @@ def _identity_pk() -> Mapped[int]:
 
 
 class _Timestamps:
+    # Fetch server-generated values (created_at) on INSERT via RETURNING, so async code
+    # can read them after a flush without a lazy load.
+    __mapper_args__ = {"eager_defaults": True}
+
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 

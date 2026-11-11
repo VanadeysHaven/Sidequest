@@ -8,9 +8,9 @@
 |---|---|---|---|
 | S1 | Foundation | ✅ done | `claude/s1-foundation` |
 | S2 | Data model | ✅ done | `claude/s2-data-model` |
-| S3 | Time & recurrence | 👀 review | `claude/s3-time-and-recurrence` |
-| S4 | Services | ⏭️ next | — |
-| S5 | Commands | ⬜ todo | — |
+| S3 | Time & recurrence | ✅ done | `claude/s3-time-and-recurrence` |
+| S4 | Services | 👀 review | `claude/s4-services` |
+| S5 | Commands | ⏭️ next | — |
 | S6 | Reminders | ⬜ todo | — |
 | S7 | Ops & hardening | ⬜ todo | — |
 
@@ -91,5 +91,30 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - Parsing extras: `parse_weekdays` also accepts `tues`, `weds`, `thur`, `thurs` and the word `and`; `parse_month_day` raises `InvalidRule`; a two-digit year gets its own message ("Write the year in full"). `search_zones` with an empty query returns the first 25 names alphabetically, and `posix/`, `right/`, `Factory`, `localtime`, `posixrules` are never offered.
   - `core/limits.py` also holds Discord's limits (select options 25, label 100, embed description 4096, embeds total 6000).
 - **Manual check (Tim):** none in Discord; S3 is pure code. `bash update.sh` on the Pi should behave as before (no migration).
+- Done: Tim committed S3 as `997cce7`.
 - Next: S4 Services.
+
+### 2026-11-11 — S4 Services built (waiting for review)
+- All 5 checklist items done on `claude/s4-services`. Uncommitted.
+- **Checks:** `ruff check .` clean · `ruff format --check .` clean · `pytest` with `TEST_DATABASE_URL`: **318 passed** (after D34) (60 new permission table tests, 26 new service integration tests incl. two concurrent `claim_due` calls on separate connections) · `alembic check`: no drift.
+- **Files:** `services/{__init__,actor,effects,uow,dto,permissions,_common,settings,todos,subtasks,occurrences}.py` (new), `core/errors.py` (NotFound, Forbidden, ReminderChannelNotSet, LimitExceeded, InvalidOperation), `db/models.py` (`eager_defaults` on the timestamp mixin), `tests/integration/conftest.py` (fixtures `clock`, `uow`, `committed_sessions`; `START` = Mon 2030-01-07 09:00 UTC), `tests/unit/test_permissions.py`, `tests/integration/test_services_{todos,occurrences,subtasks}.py` (new).
+- **How S5/S6 call services:** `uows = UowFactory(sessionmaker, SystemClock(), settings.default_timezone)`; per interaction `async with uows() as uow: out = await todos.complete(uow, actor, todo_id)`. Mutations return `Outcome(value, effects, changed_schedule)`: run `out.effects` (ignore "message not found") and wake the scheduler when `changed_schedule`. Errors are `SidequestError` subclasses with a user-safe `.message`.
+- **Deviations / decisions:**
+  - Pattern: functions take a **`Uow`** (session + clock + `default_timezone`) first, then the `Actor`; each commits itself. `UowFactory` opens one per request. Tests build `Uow(session, FixedClock(...))` directly.
+  - `create_once` takes **`due: DueInput(date, time)`** (raw user input), not a resolved `Untimed|Timed`. The service resolves the timezone first (override → user → default) and then applies D17/D18, so callers never resolve times in the wrong zone. `edit` uses the same `DueInput` in `TodoPatch(title, details, due, rule, timezone)`.
+  - `list` is named **`todos.list_todos`** (a module-level `list` would shadow the builtin).
+  - Locking: every write locks the to-do row (`FOR UPDATE`) first; `claim_due` locks to-do + occurrence with `SKIP LOCKED`. So a user action and the scheduler never interleave on one to-do, and two schedulers never claim the same row (tested).
+  - Recurring `complete`/`complete_occurrence` on the **sent** reminder: the next pending already exists (made at claim time), so nothing new is materialized. Completing the **pending** one early materializes the one after it (`after = max(due_at, now)`).
+  - `claim_due` resets subtasks only when it actually closes a previous sent reminder as missed. Ticks made early for the upcoming occurrence survive (BRIEF §4.4: reset when an occurrence is closed).
+  - `edit` of a repeating to-do keeps its sent reminder (it is still the current occurrence) and only replaces the pending one. Changing only the timezone of a timed one-time to-do keeps the wall-clock time and re-resolves it in the new zone (`InPast` if that moment has passed).
+  - `attach_message` returns a `DeleteMessage` for the just-posted message if the occurrence was checked off or cancelled while it was being posted.
+  - `mark_failed` reasons: `FAILURE_DM_CLOSED` (also sets `dm_failed_at`), `FAILURE_NO_CHANNEL`, `FAILURE_CHANNEL_UNAVAILABLE`. `DueReminder.channel_id` is None if a server never set a channel.
+  - `todos.get` shows done to-dos (history) but `NotFound` for deleted ones. Changing a done to-do raises `InvalidOperation("already done")`.
+  - `autocomplete` labels personal to-dos `(personal) …` when both lists are searched; labels are cut to 100 chars.
+  - Settings functions return plain values, not `Outcome` (they have no effects).
+  - `TodoView.can_edit` tells the UI whether to offer edit buttons for that actor.
+  - `eager_defaults` on `_Timestamps`: `created_at` is fetched via `RETURNING` on insert, so views can read it after a flush without an async lazy load. No migration change.
+- **D34 (same session, Tim):** service models are strict + frozen pydantic (`services/model.py: StrictModel`, also `extra="forbid"`). Converted: all DTOs in `services/dto.py`, `TodoPatch` (moved from `todos.py` into `dto.py`), `Actor`, `Outcome`, `DeleteMessage`. Construct them with **keyword arguments only** (`Outcome(value=view)`, `Actor(user_id=…, guild_id=…, can_manage_guild=…, origin=…)`). `Uow` stays a dataclass: it holds a session and a clock, not data. `TodoPatch` uses `model_fields_set`: `TodoPatch(details=None)` clears, leaving `details` out keeps them. Strict means no coercion: e.g. `DueInput(time="10:00")` fails; S5 must parse with `core.timeparse` first. +8 tests (`tests/unit/test_service_models.py`, one edit test) → **318 passed**.
+- **Manual check (Tim):** none in Discord; S4 adds no commands. `bash update.sh` on the Pi should behave as before (no migration).
+- Next: S5 Commands.
 

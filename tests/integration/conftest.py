@@ -13,15 +13,18 @@ schema, so it only runs against a database whose name ends with ``_test``.
 import asyncio
 import os
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from sidequest.db.migrate import upgrade_head
+from sidequest.services.uow import Uow
+from tests.support.clock import FixedClock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -77,4 +80,40 @@ async def session(migrated_database: str) -> AsyncIterator[AsyncSession]:
                 await session.close()
                 await trans.rollback()
     finally:
+        await engine.dispose()
+
+
+# --- services ----------------------------------------------------------------------------
+
+START = datetime(2030, 1, 7, 9, 0, tzinfo=UTC)
+"""Default test "now": Monday 2030-01-07 09:00 UTC."""
+
+
+@pytest.fixture
+def clock() -> FixedClock:
+    return FixedClock(START)
+
+
+@pytest.fixture
+def uow(session: AsyncSession, clock: FixedClock) -> Uow:
+    """A unit of work on the rolled-back test session (service commits become savepoints)."""
+    return Uow(session, clock, default_timezone="UTC")
+
+
+@pytest.fixture
+async def committed_sessions(
+    migrated_database: str,
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """Independent sessions whose commits are real, for concurrency tests.
+
+    Do not combine with the `session`/`uow` fixtures. All rows are removed afterwards.
+    """
+    engine = create_async_engine(migrated_database, poolclass=NullPool)
+    try:
+        yield async_sessionmaker(engine, expire_on_commit=False)
+    finally:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("TRUNCATE todos, user_settings, guild_settings RESTART IDENTITY CASCADE")
+            )
         await engine.dispose()

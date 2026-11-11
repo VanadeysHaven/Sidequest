@@ -27,3 +27,23 @@ class InPast(SidequestError):
 
 class InvalidRule(SidequestError):
     """A repeat rule (or one of its parts) is invalid."""
+
+
+class NotFound(SidequestError):
+    """The thing does not exist, or the user may not see it (so IDs don't leak)."""
+
+
+class Forbidden(SidequestError):
+    """The user may see the thing but not change it."""
+
+
+class ReminderChannelNotSet(SidequestError):
+    """A timed server to-do needs a reminder channel, and the server has none yet."""
+
+
+class LimitExceeded(SidequestError):
+    """A size limit (BRIEF §4.11) was exceeded."""
+
+
+class InvalidOperation(SidequestError):
+    """The request makes no sense for this to-do (e.g. a date for a repeating to-do)."""
