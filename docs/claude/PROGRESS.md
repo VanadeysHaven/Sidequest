@@ -11,8 +11,8 @@
 | S3 | Time & recurrence | ✅ done | `claude/s3-time-and-recurrence` |
 | S4 | Services | ✅ done | `claude/s4-services` |
 | S5 | Commands | ✅ done | `claude/s5-commands` |
-| S6 | Reminders | 👀 review | `claude/s6-reminders` |
-| S7 | Ops & hardening | ⬜ todo | — |
+| S6 | Reminders | ✅ done | `claude/s6-reminders` |
+| S7 | Ops & hardening | ⏭️ next | — |
 
 Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's review/commit · ✅ done
 
@@ -140,9 +140,9 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - Command sync hash: SHA-256 of the canonical JSON of the global payload, stored in `app_meta['command_hash']` via `services/meta.py`. Server-only mode hashes the empty global payload, so global commands are cleared once, not on every start. Guild syncs and cleanup always run. A hash read/write failure logs a warning and falls back to syncing.
   - `ScheduleSignal` was created now (BRIEF §5.3 `scheduler/signal.py`) so S5 can wake the scheduler; S6 owns the loop.
 - **Manual test checklist (Tim, dev bot with `SYNC_GLOBAL=false`):**
-  - [ ] Startup log: "Server-only mode: cleared global commands" on the first start, "Global commands unchanged; skipped sync" on the second; guild sync both times.
-  - [ ] `/sidequest channel` as admin posts a confirmation in that channel; a non-admin is refused; a channel the bot can't post in gives the permissions hint.
-  - [ ] `/settings timezone` autocomplete finds `Europe/Amsterdam`; setting it works; without an argument it shows the current one.
+  - [x] Startup log: "Server-only mode: cleared global commands" on the first start, "Global commands unchanged; skipped sync" on the second; guild sync both times.
+  - [x] `/sidequest channel` as admin posts a confirmation in that channel; a non-admin is refused; a channel the bot can't post in gives the permissions hint.
+  - [x] `/settings timezone` autocomplete finds `Europe/Amsterdam`; setting it works; without an argument it shows the current one.
   - [ ] `/todo add` untimed, time-only, explicit `today` + time, date+time; date-only rejected; past time rejected; `9pm` rejected with the 24h hint.
   - [ ] Server timed to-do before `/sidequest channel` is set → clear error.
   - [ ] `/todo repeat monthly-day day:31` → reply notes the last-day fallback; next occurrence right.
@@ -172,10 +172,14 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - [ ] **DM verification (BRIEF §5.4):** a test account that has the app user-installed and shares **no** server with the bot creates a personal timed to-do in DMs. Does the reminder DM arrive? Tell Claude the answer so it can be recorded.
   - [ ] Heartbeat: `docker compose exec bot cat /tmp/sidequest-heartbeat` shows a recent UTC time.
   - [ ] All times show as Discord timestamps.
+  - **D36 unset reminder channel:**
+  - [ ] `/sidequest channel clear:True` as admin → warning with the number of timed server to-dos + Unset channel / Cancel. Cancel keeps it; Unset clears it.
+  - [ ] After unsetting: a timed server to-do is refused with the "set a reminder channel" error; a due server reminder isn't posted (marked failed); an earlier reminder's Done still works.
+  - [ ] `clear:True` with a channel → error; `clear:True` when none is set → "no reminder channel set"; non-admin → refused.
 - Done: Tim committed S5 as `4cbcc59`. Tim hasn't run the checklist above yet; S5 and S6 get tested together after S6.
 - Next: S6 Reminders. **S6: add your manual checks to the open S5 checklist above** (Tim's choice, one combined test pass) instead of starting a separate list.
 
-### 2026-11-11 — S6 Reminders built (waiting for review)
+### 2026-11-11 — S6 Reminders built
 - All checklist items done on `claude/s6-reminders`, except the DM verification, which needs Discord (on the checklist above). Uncommitted.
 - **Checks:** `ruff check .` clean · `ruff format --check .` clean · `pytest` with `TEST_DATABASE_URL`: **414 passed** (+26: 9 scheduler loop tests with `FakeNotifier` + real Postgres, 7 for the new services, 9 reminder render/view tests, layering now also covers `scheduler`). Nothing tested in Discord itself.
 - **Files:** new: `scheduler/{loop,notifier}.py`, `bot/notifier.py`, `bot/views/reminder.py`, `tests/support/notifier.py`, `tests/integration/test_{scheduler,services_reminders}.py`, `tests/unit/test_reminder_render.py`. Changed: `services/occurrences.py` (`tick_subtasks`, `is_live`, failure reasons), `bot/render.py` (`reminder_embed`, `reminder_pings`), `bot/client.py` (dynamic items, starts/stops the scheduler), `bot/adapter.py` (`BotDeps.run_scheduler`), `tests/unit/{test_command_sync,test_layering}.py`, `docs/claude/BRIEF.md` §5.4.
@@ -192,4 +196,11 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - DynamicItem callbacks are wrapped in `try/except → report_error`, because discord.py only logs exceptions from dynamic items and the user would see nothing.
   - DM verification (user-install without a shared server) is not done: Claude can't use Discord. Recorded as open in BRIEF §5.4 and on the checklist; the code handles both answers.
 - **Manual check (Tim):** the S6 items are added to the open S5 checklist above (one combined test pass, as agreed).
-- Next: after Tim's review/commit and the combined S5+S6 test pass → S7 Ops & hardening.
+- Done: Tim committed S6 as `ba5c123`. The combined S5+S6 manual test pass (incl. the DM verification) is still open.
+- Next: S7 Ops & hardening. **S7: ask Tim for the result of the DM verification and record it in BRIEF §5.4.**
+- Same day, Tim: unsetting the reminder channel must be possible → **D36**, built right away on `claude/s6-reminders` (Tim asked; uncommitted):
+  - `services/settings.py`: `clear_reminder_channel(uow, actor)` (Manage Server; `InvalidOperation` if none is set) and `count_scheduled_server_todos(uow, guild_id)` (open server to-dos with a pending occurrence). The Manage Server message now says "change" instead of "set".
+  - `/sidequest channel`: `channel` is now optional, new option `clear: bool`. Both → error; neither → "Pick a channel, or use `clear:True`". `clear:True` replies with `admin.clear_warning(...)` + `ClearChannelConfirmView` (Unset channel / Cancel, in `views/confirm.py`); the button re-checks Manage Server in the service.
+  - The command payload changed, so the global sync runs once on the next start (hash differs).
+  - Tests: `tests/integration/test_reminder_channel_clear.py`, `tests/unit/test_admin_clear_warning.py`.
+  - Manual checks (added to the combined checklist): see "D36" items above.

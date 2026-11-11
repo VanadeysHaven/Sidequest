@@ -2,12 +2,13 @@
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
+from sidequest.core.enums import OccurrenceStatus, Scope, TodoStatus
 from sidequest.core.errors import Forbidden, InvalidOperation
 from sidequest.core.tz import get_zone
-from sidequest.db.models import GuildSettings, UserSettings
+from sidequest.db.models import GuildSettings, Occurrence, Todo, UserSettings
 from sidequest.services import permissions
 from sidequest.services._common import user_timezone
 from sidequest.services.actor import Actor
@@ -61,12 +62,22 @@ async def consume_dm_failure(uow: Uow, user_id: int) -> datetime | None:
     return failed_at
 
 
-async def set_reminder_channel(uow: Uow, actor: Actor, channel_id: int) -> GuildSettingsView:
-    """Requires Manage Server (D6). The adapter verifies the bot can post there first."""
+NO_REMINDER_CHANNEL = "This server has no reminder channel set."
+
+
+def _require_manage(actor: Actor) -> int:
+    """The actor's guild id, if they may change its reminder channel (Manage Server, D6)."""
     if actor.guild_id is None:
         raise InvalidOperation("The reminder channel can only be set in a server.")
     if not permissions.can_manage_guild(actor, actor.guild_id):
-        raise Forbidden("You need the Manage Server permission to set the reminder channel.")
+        raise Forbidden("You need the Manage Server permission to change the reminder channel.")
+    return actor.guild_id
+
+
+async def set_reminder_channel(uow: Uow, actor: Actor, channel_id: int) -> GuildSettingsView:
+    """Requires Manage Server (D6). The adapter verifies the bot can post there first."""
+    _require_manage(actor)
+    assert actor.guild_id is not None
     stmt = insert(GuildSettings).values(guild_id=actor.guild_id, reminder_channel_id=channel_id)
     stmt = stmt.on_conflict_do_update(
         index_elements=[GuildSettings.guild_id], set_={"reminder_channel_id": channel_id}
@@ -81,3 +92,34 @@ async def get_guild_settings(uow: Uow, guild_id: int) -> GuildSettingsView:
         select(GuildSettings.reminder_channel_id).where(GuildSettings.guild_id == guild_id)
     )
     return GuildSettingsView(guild_id=guild_id, reminder_channel_id=channel_id)
+
+
+async def clear_reminder_channel(uow: Uow, actor: Actor) -> None:
+    """Unset the reminder channel (D36). Requires Manage Server. Reminders that come due
+    afterwards are marked failed (`no_channel`); posted ones stay and keep working."""
+    guild_id = _require_manage(actor)
+    result = await uow.session.execute(
+        update(GuildSettings)
+        .where(GuildSettings.guild_id == guild_id, GuildSettings.reminder_channel_id.is_not(None))
+        .values(reminder_channel_id=None)
+    )
+    if result.rowcount == 0:  # type: ignore[attr-defined]
+        await uow.session.rollback()
+        raise InvalidOperation(NO_REMINDER_CHANNEL)
+    await uow.session.commit()
+
+
+async def count_scheduled_server_todos(uow: Uow, guild_id: int) -> int:
+    """Open server to-dos that still have a reminder coming (a pending occurrence): the
+    ones that stop reminding when the reminder channel is unset."""
+    count = await uow.session.scalar(
+        select(func.count(func.distinct(Todo.id)))
+        .join(Occurrence, Occurrence.todo_id == Todo.id)
+        .where(
+            Todo.scope == Scope.SERVER,
+            Todo.guild_id == guild_id,
+            Todo.status == TodoStatus.OPEN,
+            Occurrence.status == OccurrenceStatus.PENDING,
+        )
+    )
+    return count or 0
