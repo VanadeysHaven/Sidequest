@@ -23,6 +23,9 @@ services:
   bot:
     build: .
     container_name: sidequest-bot
+    # tini as PID 1 forwards SIGTERM to the bot, also before its own handler is installed
+    # (during migrations); Python as PID 1 would ignore it until then.
+    init: true
     env_file:
       - path: configs/.env
         required: true

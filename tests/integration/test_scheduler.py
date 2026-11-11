@@ -12,7 +12,7 @@ from sidequest.core.enums import OccurrenceStatus, Scope
 from sidequest.core.recurrence import DailyRule
 from sidequest.db.models import Occurrence, UserSettings
 from sidequest.scheduler.loop import Scheduler
-from sidequest.scheduler.notifier import Failed
+from sidequest.scheduler.notifier import Failed, Posted
 from sidequest.scheduler.signal import ScheduleSignal
 from sidequest.services import occurrences, settings, todos
 from sidequest.services.actor import Actor
@@ -321,3 +321,73 @@ async def test_schedule_signal_wakes_the_loop_early(
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+
+
+async def test_stop_ends_a_sleeping_loop_right_away(
+    committed_sessions: async_sessionmaker[AsyncSession], clock: FixedClock, tmp_path: Path
+) -> None:
+    uows = UowFactory(committed_sessions, clock)
+    heartbeat = tmp_path / "heartbeat"
+    heartbeat.write_text("left over from an earlier run", encoding="utf-8")
+    scheduler = _scheduler(uows, FakeNotifier(), clock, tmp_path, max_sleep=60)
+
+    task = asyncio.create_task(scheduler.run())
+    try:
+        # The old heartbeat is removed at start; a new one marks the end of iteration one.
+        for _ in range(500):
+            if (
+                heartbeat.exists()
+                and heartbeat.read_text(encoding="utf-8") == clock.now().isoformat()
+            ):
+                break
+            await asyncio.sleep(0.01)
+        assert heartbeat.read_text(encoding="utf-8") == clock.now().isoformat()
+
+        scheduler.stop()
+        await asyncio.wait_for(task, timeout=2)
+        assert not task.cancelled()
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+class GatedNotifier(FakeNotifier):
+    """Blocks inside `post` until `release` is set, to stop the loop mid-delivery."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def post(self, reminder: DueReminder) -> Posted | Failed:  # type: ignore[override]
+        self.entered.set()
+        await self.release.wait()
+        return await super().post(reminder)  # type: ignore[return-value]
+
+
+async def test_stop_finishes_the_reminder_being_delivered(
+    committed_sessions: async_sessionmaker[AsyncSession], clock: FixedClock, tmp_path: Path
+) -> None:
+    uows = UowFactory(committed_sessions, clock)
+    notifier = GatedNotifier()
+    scheduler = _scheduler(uows, notifier, clock, tmp_path)
+    await _set_channel(uows)
+    todo_id, _ = await _create_once(uows, title="in flight", due=time(10, 0))
+    clock.set(utc(7, 10))
+
+    task = asyncio.create_task(scheduler.run())
+    try:
+        await asyncio.wait_for(notifier.entered.wait(), timeout=5)
+        scheduler.stop()
+        notifier.release.set()
+        await asyncio.wait_for(task, timeout=5)
+        assert not task.cancelled()
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    [occ] = await _occurrences(uows, todo_id)
+    assert occ.status == OccurrenceStatus.SENT
+    assert occ.message_id is not None  # recorded, so nothing is re-posted after a restart

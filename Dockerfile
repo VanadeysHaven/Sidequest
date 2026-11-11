@@ -20,4 +20,9 @@ RUN pip install --no-deps --no-cache-dir .
 RUN useradd --uid 1000 --no-create-home --shell /usr/sbin/nologin sidequest
 USER sidequest
 
+# Healthy while the reminder loop keeps writing its heartbeat (every <= 60 s).
+# start-period covers migrations, login and the first loop iteration.
+HEALTHCHECK --interval=60s --timeout=10s --start-period=120s --retries=3 \
+    CMD ["sidequest", "healthcheck"]
+
 CMD ["sidequest"]

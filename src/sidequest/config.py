@@ -33,6 +33,8 @@ class Settings(DatabaseSettings):
     sync_global: bool = True
     sync_guild_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
     run_migrations: bool = True
+    # Delete finished to-dos and old reminder history after this many days (D8). Unset: keep.
+    history_retention_days: int | None = Field(default=None, ge=1)
 
     # Written by update.sh into configs/git.env.
     commit: str | None = None

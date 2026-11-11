@@ -16,6 +16,7 @@ ENV_VARS = (
     "COMMIT",
     "BRANCH",
     "DEPLOY_TIME",
+    "HISTORY_RETENTION_DAYS",
 )
 
 DATABASE_URL = "postgresql+asyncpg://u:p@h/db"
@@ -181,3 +182,38 @@ def test_global_sync_without_guild_ids_is_valid(monkeypatch: pytest.MonkeyPatch)
 
     assert settings.sync_global is True
     assert settings.sync_guild_ids == []
+
+
+def test_history_retention_is_unset_by_default() -> None:
+    settings = make_settings()
+
+    assert settings.history_retention_days is None
+
+
+def test_history_retention_days_is_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv("HISTORY_RETENTION_DAYS", "30")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.history_retention_days == 30
+
+
+def test_empty_history_retention_days_keeps_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv("HISTORY_RETENTION_DAYS", "")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.history_retention_days is None
+
+
+def test_zero_history_retention_days_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DISCORD_TOKEN", "token")
+    monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv("HISTORY_RETENTION_DAYS", "0")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)

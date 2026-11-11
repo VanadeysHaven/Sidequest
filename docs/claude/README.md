@@ -21,6 +21,7 @@ the interfaces it needs from earlier segments).
 | `BRIEF.md` | Product spec, hard constraints, decision log, architecture, assumptions |
 | `WORKFLOW.md` | Rules for Claude: sessions, models, git, docs, conventions, testing |
 | `PROGRESS.md` | Status per segment + handoff log |
+| `RUNBOOK.md` | Operating the bot on the Pi: setup, config, deploy, health, backups, restore, upgrades |
 | `segments/S1-foundation.md` | Repo skeleton, packaging, Docker, Postgres, CLI, update script, bot that connects |
 | `segments/S2-data-model.md` | Schema, SQLAlchemy models, Alembic, DB test harness |
 | `segments/S3-time-and-recurrence.md` | Pure time parsing, timezones, recurrence engine, Discord timestamp helpers |

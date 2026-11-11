@@ -10,19 +10,25 @@ Each iteration:
 3. Sleep until the next due time (at most `max_sleep`), or until `ScheduleSignal.wake()`.
    A full batch skips the sleep.
 
+After every successful iteration the heartbeat file is rewritten (`sidequest.health`).
+`stop()` ends the loop after the current iteration, so a normal shutdown doesn't cut off a
+reminder between posting it and recording where it went. (If the bot has to cancel the loop
+because an iteration takes too long, recovery re-posts such a reminder after the restart,
+so it may appear twice.)
+
 One bad reminder never stops the loop: it is logged and marked failed. A failing iteration
 (e.g. the database is down) is logged and retried after `max_sleep`.
 """
 
 import asyncio
 import logging
-import tempfile
 from collections.abc import Sequence
 from datetime import timedelta
 from pathlib import Path
 
 from sidequest.core.clock import Clock
 from sidequest.core.errors import NotFound
+from sidequest.health import HEARTBEAT_FILE, write_heartbeat
 from sidequest.scheduler.notifier import Failed, Notifier, Posted, PostResult
 from sidequest.scheduler.signal import ScheduleSignal
 from sidequest.services import occurrences
@@ -31,9 +37,6 @@ from sidequest.services.effects import DeleteMessage, Effect
 from sidequest.services.uow import UowFactory
 
 log = logging.getLogger(__name__)
-
-HEARTBEAT_FILE = Path(tempfile.gettempdir()) / "sidequest-heartbeat"
-"""Rewritten after every successful iteration (ISO timestamp); S7's healthcheck reads it."""
 
 BATCH = 20
 MAX_SLEEP = 60.0
@@ -65,11 +68,18 @@ class Scheduler:
         self._recover_after = recover_after
         self._heartbeat = heartbeat
         self._heartbeat_warned = False
+        self._stopping = False
+
+    def stop(self) -> None:
+        """Ask `run()` to return after the current iteration (or right away if asleep)."""
+        self._stopping = True
+        self._signal.wake()
 
     async def run(self) -> None:
-        """Run until cancelled."""
+        """Run until `stop()` (or cancelled)."""
         log.info("Scheduler started")
-        while True:
+        self._clear_heartbeat()
+        while not self._stopping:
             try:
                 await self.recover()
                 full = await self.post_due()
@@ -79,6 +89,8 @@ class Scheduler:
                 delay = self._max_sleep
             else:
                 self._beat()
+            if self._stopping:
+                break
             if delay > 0:
                 await self._signal.wait(delay)
             else:
@@ -156,11 +168,20 @@ class Scheduler:
         except Exception:
             log.exception("Could not carry out %d effect(s)", len(effects))
 
+    def _clear_heartbeat(self) -> None:
+        """A heartbeat left by an earlier run proves nothing about this one."""
+        if self._heartbeat is None:
+            return
+        try:
+            self._heartbeat.unlink(missing_ok=True)
+        except OSError as exc:
+            log.warning("Could not remove the old heartbeat file %s: %s", self._heartbeat, exc)
+
     def _beat(self) -> None:
         if self._heartbeat is None:
             return
         try:
-            self._heartbeat.write_text(self._clock.now().isoformat(), encoding="utf-8")
+            write_heartbeat(self._heartbeat, self._clock.now())
         except OSError as exc:
             if not self._heartbeat_warned:
                 log.warning("Could not write the heartbeat file %s: %s", self._heartbeat, exc)

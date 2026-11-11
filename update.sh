@@ -80,11 +80,15 @@ else
   fi
 fi
 
+# Build while the old bot keeps running; the image build is the slow part on the Pi.
+echo "Building images..."
+docker compose build
+
 echo "Shutting down bot..."
 docker compose down
 
-echo "Rebuilding images and launching..."
-docker compose up -d --remove-orphans --build
+echo "Launching..."
+docker compose up -d --remove-orphans
 
 echo "Done! Bot will connect to Discord shortly."
 docker compose ps

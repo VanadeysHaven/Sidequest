@@ -12,7 +12,7 @@
 | S4 | Services | ✅ done | `claude/s4-services` |
 | S5 | Commands | ✅ done | `claude/s5-commands` |
 | S6 | Reminders | ✅ done | `claude/s6-reminders` |
-| S7 | Ops & hardening | ⏭️ next | — |
+| S7 | Ops & hardening | 👀 waiting for Tim's review/commit | `claude/s7-ops` |
 
 Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's review/commit · ✅ done
 
@@ -217,3 +217,31 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - Manual checks (added to the combined checklist): see "D36" items above.
 - Same day, Tim: **D37**, built right away (Tim asked; uncommitted): `render.done_text` now always says "✅ Checked off **title**." (+ " Next: <timestamp>" for a repeating to-do with a next occurrence); `/todo upcoming` uses it too instead of its own text. `ShowView._done` replaces the message with only that text (no embed, no buttons) and stops the view. Tests: `tests/unit/test_render.py` (updated + one new case).
 - Same day, Tim: `/todo show` → **Edit details** now refreshes the `/todo show` message on save (new details visible, confirmation as its text), instead of sending a separate reply. `DetailsModal` got an optional `on_saved` callback (ShowView passes `_refresh`); the modal then defers as a message update. `/todo details` still replies separately. `ShowView._refresh` drops the buttons if the view already timed out.
+
+### 2026-11-12 — S7 Ops & hardening built (waiting for review)
+- All checklist items done on `claude/s7-ops` (branched from `claude/s6-reminders`). Uncommitted.
+- **Checks:** `ruff check .` clean · `ruff format --check .` clean · `pytest` with `TEST_DATABASE_URL`: **459 passed** (+45: health/watchdog/healthcheck, graceful shutdown, scheduler `stop()`, retention, config). Docker image not built (Tim's rule: don't verify builds). Nothing tested on the Pi or in Discord.
+- **Files:** new: `src/sidequest/health.py`, `services/retention.py`, `scheduler/retention.py`, `scripts/restore-backup.sh`, `docs/claude/RUNBOOK.md`, `tests/unit/{test_health,test_client_shutdown}.py`, `tests/integration/test_retention.py`. Changed: `bot/client.py`, `scheduler/loop.py`, `cli.py`, `config.py`, `Dockerfile`, `compose.yaml`, `update.sh`, `configs/.env.example`, root `README.md`, `tests/unit/test_config.py`, `tests/integration/test_scheduler.py`, `docs/claude/{BRIEF,README}.md`.
+- **What was built:**
+  - `sidequest healthcheck` (exit 1 if the heartbeat is > 3 min old) + Dockerfile `HEALTHCHECK` (60 s interval, 120 s start period). It skips pydantic/discord/sqlalchemy imports so it starts fast on the Pi.
+  - **D38 (Tim, mid-session: "this should be automatically restarted"):** `health.Watchdog`, a thread that `os._exit(1)`s when the heartbeat content hasn't changed for 3 min (5 min grace at start). `restart: unless-stopped` restarts the bot. Chosen over an autoheal container (needs the Docker socket).
+  - Graceful shutdown: `client.serve()` installs SIGTERM/SIGINT handlers (Python as PID 1 ignores SIGTERM otherwise) and closes the client; `close()` stops the watchdog, cancels the cleanup task, lets the scheduler finish its iteration (`Scheduler.stop()`, 5 s timeout, then cancel), closes Discord and the DB engine. `compose.yaml`: `init: true` (tini) so SIGTERM also works during migrations. The heartbeat file is removed at scheduler start and written atomically.
+  - History retention (D8): `HISTORY_RETENTION_DAYS` (≥ 1, unset = keep). Runs at startup and then daily.
+  - `scripts/restore-backup.sh [-y] [--no-safety-dump] <file>`: validates the gzip, asks for `restore`, makes a `backups/pre-restore-*.sql.gz` safety dump, stops the bot, drops and recreates the DB, loads it with `ON_ERROR_STOP`, starts the bot (which migrates).
+  - `update.sh`: confirmed it keeps 14 dumps and aborts on a failed dump. Changed: it now builds the image **before** `docker compose down`, so the bot is down only for the restart.
+  - Runbook (`docs/claude/RUNBOOK.md`) and a root `README.md`.
+- **Deviations:**
+  - Retention also deletes old **`cancelled`** occurrences of open repeating to-dos. The segment doc lists only missed/failed/done, but each edit creates a cancelled occurrence, so without this they'd pile up forever.
+  - Retention judges occurrence age by `due_at`.
+- **Final review** (fresh Opus subagent): no data-loss or crash bugs; C1–C10, D1–D38, layering, `discord_time`, SQL, async blocking and "now" via `Clock` all pass. 12 hardening findings:
+  - Fixed: (1) non-atomic heartbeat write could make the watchdog fire on a half-written file → temp file + `os.replace`; (2) watchdog could hang on a blocked log handler → a 5 s `os._exit` timer starts before logging; (3) Pi clock jump after boot (NTP) looked like a stale beat → watchdog uses a monotonic clock and watches for content *changes*; (4) restore couldn't run when the current DB is missing/broken → `--no-safety-dump`; (6) SIGTERM ignored during migrations → `init: true`; (7) a stop signal during command sync could start the scheduler after `close()` → `_shutting_down` flag; (8) loop docstring overstated the shutdown guarantee → reworded; (9) no client-level `allowed_mentions` safety net → `AllowedMentions.none()` on the client (reminders still pass users explicitly); (11) healthcheck imported pydantic → lazy import; (12) bot offline during the image build → build first.
+  - Accepted, documented in the runbook: (5) an error that repeats every loop round (not only DB down) makes the watchdog restart the bot every ~5 min. Restarting can't fix it, but it makes the problem visible. Accepted by Tim (2026-11-12).
+  - (10) to-do **details** have mentions escaped but **not** markdown, so formatting renders in embeds. Tim (2026-11-12): keep it, details show markdown → **D39**.
+- **Tim, before committing:** `git add --chmod=+x scripts/restore-backup.sh` (new executable; Tim is on Windows).
+- **Manual checks (Tim, on the Pi):**
+  - [ ] `./update.sh` deploys; within ~2 min `docker compose ps` shows `sidequest-bot` **(healthy)**.
+  - [ ] `docker compose down` logs `Received SIGTERM`, `Shutting down`, `Scheduler stopped`, `Stopped`, no traceback, and takes well under 10 s.
+  - [ ] Watchdog: `docker compose pause db`, wait ~4–5 min → log shows `Reminder loop is stuck` and the bot restarts (`RestartCount` goes up); `docker compose unpause db` → healthy again.
+  - [ ] Restore round trip: create a to-do, `./update.sh` (makes a backup), delete the to-do, `scripts/restore-backup.sh backups/<newest>.sql.gz` → the to-do is back and the bot is healthy.
+  - [ ] Optional: `HISTORY_RETENTION_DAYS=30` in `configs/.env`, `docker compose up -d --force-recreate bot` → log shows `History cleanup on: keeping 30 days`.
+- Next: none. S7 is the last segment. Open items: the combined S5+S6 checklist items blocked by DM commands (Future work), and the S1 Developer Portal checklist.
