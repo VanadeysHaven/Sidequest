@@ -41,7 +41,9 @@ propcache==0.5.4
     #   aiohttp
     #   yarl
 pydantic==2.14.3
-    # via pydantic-settings
+    # via
+    #   pydantic-settings
+    #   sidequest (pyproject.toml)
 pydantic-core==2.50.4
     # via pydantic
 pydantic-settings==2.16.2

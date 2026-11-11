@@ -8,7 +8,7 @@ import pytest
 
 from sidequest.bot.client import SidequestClient
 from sidequest.config import Settings
-from sidequest.core.clock import Clock
+from sidequest.core.clock import SystemClock
 
 DATABASE_URL = "postgresql+asyncpg://u:p@h/db"
 
@@ -37,7 +37,7 @@ def make_client(
     Each record is (guild id or None for global, command names registered for that scope).
     """
     settings = make_settings(sync_global=sync_global, sync_guild_ids=sync_guild_ids)
-    client = SidequestClient(settings, Clock())
+    client = SidequestClient(settings, SystemClock())
     calls: list[SyncCall] = []
 
     async def fake_sync(*, guild: discord.abc.Snowflake | None = None) -> list[object]:

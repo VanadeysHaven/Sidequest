@@ -9,7 +9,7 @@ All functions take explicit inputs (`now`, `tz`) — never read the clock themse
 ## Modules
 
 ### `core/clock.py`
-`Clock` protocol with `now() -> datetime` (aware UTC); `SystemClock`; `FixedClock` for tests (settable/advanceable).
+`Clock` protocol with `now() -> datetime` (aware UTC); `SystemClock`. The test clock `FixedClock` (settable/advanceable) lives in `tests/support/clock.py`, not in the package (Tim, 2026-11-11).
 
 ### `core/errors.py`
 `SidequestError` base with a user-safe `message`. Subclasses used here: `InvalidTime`, `InvalidDate`, `InvalidTimezone`, `InPast`, `InvalidRule`. (S4 adds more.)

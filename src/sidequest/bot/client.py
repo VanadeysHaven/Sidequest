@@ -7,7 +7,7 @@ from discord import app_commands
 
 from sidequest.bot.commands.about import SidequestGroup
 from sidequest.config import Settings
-from sidequest.core.clock import Clock
+from sidequest.core.clock import Clock, SystemClock
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +67,6 @@ class SidequestClient(discord.Client):
 
 
 def run(settings: Settings) -> None:
-    client = SidequestClient(settings, Clock())
+    client = SidequestClient(settings, SystemClock())
     # log_handler=None: keep the logging set up by sidequest.logging.
     client.run(settings.discord_token.get_secret_value(), log_handler=None)

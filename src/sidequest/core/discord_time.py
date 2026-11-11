@@ -1,6 +1,6 @@
-"""Discord timestamps (`<t:unix:style>`): the only way points in time reach users.
+"""Discord timestamps (`<t:unix:style>`): the only way points in time reach users (C5).
 
-Minimal for S1; S3 completes this module.
+Discord renders them in each viewer's own timezone and 12h/24h preference (D1).
 """
 
 import math
@@ -16,3 +16,8 @@ def ts(dt: datetime, style: Style = "f") -> str:
     if dt.tzinfo is None:
         raise ValueError("naive datetime; use timezone-aware UTC")
     return f"<t:{math.floor(dt.timestamp())}:{style}>"
+
+
+def ts_due(dt: datetime) -> str:
+    """The standard way to show a due time: full date + time, then relative."""
+    return f"{ts(dt, 'F')} ({ts(dt, 'R')})"

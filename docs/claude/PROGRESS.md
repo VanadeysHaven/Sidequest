@@ -8,8 +8,8 @@
 |---|---|---|---|
 | S1 | Foundation | ✅ done | `claude/s1-foundation` |
 | S2 | Data model | ✅ done | `claude/s2-data-model` |
-| S3 | Time & recurrence | ⏭️ next | — |
-| S4 | Services | ⬜ todo | — |
+| S3 | Time & recurrence | 👀 review | `claude/s3-time-and-recurrence` |
+| S4 | Services | ⏭️ next | — |
 | S5 | Commands | ⬜ todo | — |
 | S6 | Reminders | ⬜ todo | — |
 | S7 | Ops & hardening | ⬜ todo | — |
@@ -72,3 +72,24 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
 - Same session: descriptions added to the enums in `core/enums.py` (docstrings per value).
 - Done: Tim committed S2 as `4f7e7aa` and deployed on the Pi; migration `0002` applied and the bot works.
 - Next: S3 Time & recurrence.
+
+### 2026-11-11 — S3 Time & recurrence built (waiting for review)
+- All modules from the segment doc done on `claude/s3-time-and-recurrence`. Uncommitted.
+- **Checks:** `ruff check .` clean · `ruff format --check .` clean · `pytest tests/unit`: **204 passed** (93 for timeparse/tz/clock/discord_time, the recurrence table, the layering test now also covers `sidequest.db`). Integration tests were not re-run: S3 touches no DB code.
+- **Files:** `core/{clock,discord_time,enums}.py` (changed), `core/{errors,limits,tz,timeparse,recurrence}.py` (new), `bot/client.py` + `tests/unit/test_command_sync.py` (`Clock()` → `SystemClock()`), `tests/unit/test_layering.py` (core also may not import `sidequest.db`), `tests/__init__.py` + `tests/support/{__init__,clock}.py` (new), `tests/unit/{test_timeparse,test_tz,test_clock_and_discord_time,test_recurrence}.py` (new), `pyproject.toml` + lockfiles (`pydantic` is now a direct dependency; the pins didn't change, only the `# via` comments).
+- **Deviations / decisions:**
+  - Branch is `claude/s3-time-and-recurrence` (the segment doc said `claude/s3-time-recurrence`).
+  - `Clock` is now a `Protocol`; `SystemClock` is the production clock. Code that needs "now" takes a `Clock`.
+  - The test clock `FixedClock(now)` (`set`, `advance`) lives in **`tests/support/clock.py`** (Tim: keep test-only code out of the package). Import it as `from tests.support.clock import FixedClock`; this works because `tests/` and `tests/support/` are packages, pytest has `pythonpath = ["."]`, and ruff treats `tests` as first-party. Shared test helpers for S4–S6 (e.g. a `FakeNotifier`) belong in `tests/support/` too.
+  - `Weekday` (`"mon"`…`"sun"`, `.index` Monday = 0, `.full_name`, `from_index`) lives in `core/enums.py` next to the other shared enums.
+  - Rule models are frozen pydantic models; `times`/`weekdays` are **tuples**, sorted and deduplicated on validation (JSON still uses lists). Both `from_json(...)` and direct construction (`DailyRule(times=[...])`) raise `InvalidRule`, never pydantic's `ValidationError`. Python construction accepts `time` objects or `"HH:MM"` strings. `week`/`day` are strict ints (a JSON `true` is rejected).
+  - `to_json`/`from_json` are module functions (`RecurrenceRule` is an `Annotated` union, so it can't carry methods).
+  - `next_occurrence` sorts the resolved instants per day: on a spring-forward day 02:30 becomes 03:30 and can land after a later wall-clock time or on the same instant; duplicates collapse to one occurrence.
+  - `describe` for days 29–31 puts the fallback note right after the day: "Every month on the 31st (or the last day of shorter months) at 09:00 (UTC)", which reads better than appending it after the timezone.
+  - `resolve_local` relies on `fold=0`: zoneinfo applies the pre-transition offset, which shifts a gap time forward by the gap and picks the first instance of an ambiguous time. That covers both DST rules without special cases.
+  - `resolve_due` with time only: "still ahead" means strictly later than `now`; otherwise tomorrow. The `InPast` message shows the moment as a Discord timestamp.
+  - Parsing extras: `parse_weekdays` also accepts `tues`, `weds`, `thur`, `thurs` and the word `and`; `parse_month_day` raises `InvalidRule`; a two-digit year gets its own message ("Write the year in full"). `search_zones` with an empty query returns the first 25 names alphabetically, and `posix/`, `right/`, `Factory`, `localtime`, `posixrules` are never offered.
+  - `core/limits.py` also holds Discord's limits (select options 25, label 100, embed description 4096, embeds total 6000).
+- **Manual check (Tim):** none in Discord; S3 is pure code. `bash update.sh` on the Pi should behave as before (no migration).
+- Next: S4 Services.
+

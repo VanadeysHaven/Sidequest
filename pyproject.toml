@@ -13,6 +13,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0,<3",
     "asyncpg",
     "alembic",
+    "pydantic>=2",
     "pydantic-settings>=2",
     "tzdata",
 ]
@@ -40,7 +41,11 @@ extend-exclude = ["docs"]  # design docs contain illustrative, not runnable, cod
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["sidequest", "tests"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+pythonpath = ["."]  # so tests can import shared helpers from tests.support

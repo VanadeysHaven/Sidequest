@@ -63,3 +63,33 @@ class OccurrenceStatus(StrEnum):
 
     FAILED = "failed"
     """The reminder could not be posted, e.g. no reminder channel or DMs closed."""
+
+
+class Weekday(StrEnum):
+    """Day of the week as stored in recurrence rules (JSONB)."""
+
+    MON = "mon"
+    TUE = "tue"
+    WED = "wed"
+    THU = "thu"
+    FRI = "fri"
+    SAT = "sat"
+    SUN = "sun"
+
+    @property
+    def index(self) -> int:
+        """Monday = 0 … Sunday = 6, matching `date.weekday()`."""
+        return _WEEKDAY_ORDER.index(self)
+
+    @property
+    def full_name(self) -> str:
+        """English name, e.g. "Monday"."""
+        return _WEEKDAY_NAMES[self.index]
+
+    @classmethod
+    def from_index(cls, index: int) -> "Weekday":
+        return _WEEKDAY_ORDER[index]
+
+
+_WEEKDAY_ORDER: tuple[Weekday, ...] = tuple(Weekday)
+_WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
