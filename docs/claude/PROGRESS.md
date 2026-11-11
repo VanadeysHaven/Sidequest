@@ -22,6 +22,10 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
 - [ ] Create a **dev** Discord application (separate from production) with a test server; note its token and the test server ID for `SYNC_GUILD_IDS`.
 - [ ] In the Developer Portal → Installation: enable **Guild Install** (scopes `applications.commands`, `bot`; permissions View Channel, Send Messages, Embed Links) and **User Install** (`applications.commands`). Leave all privileged intents off.
 
+## Future work (Tim's notes, not scheduled)
+
+- **Commands don't work in DMs** (Tim, 2026-11-11; accepted for now). Not investigated yet. First suspect: the dev bot runs with `SYNC_GLOBAL=false`, and by D32 server-only mode clears the global commands, so DMs and user installs get no commands at all. That would make this expected on the dev bot. To check: does it also happen on the production bot (`SYNC_GLOBAL=true`)? If yes, look at the install contexts (`ANYWHERE_INSTALLS` / `ANYWHERE_CONTEXTS` in `bot/commands/common.py`), whether User Install is enabled in the Developer Portal, and whether the user has the app user-installed. Also affects the DM test items in the combined S5+S6 checklist.
+
 ## Handoff log
 
 ### 2026-11-10 — Brief written
@@ -143,39 +147,45 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - [x] Startup log: "Server-only mode: cleared global commands" on the first start, "Global commands unchanged; skipped sync" on the second; guild sync both times.
   - [x] `/sidequest channel` as admin posts a confirmation in that channel; a non-admin is refused; a channel the bot can't post in gives the permissions hint.
   - [x] `/settings timezone` autocomplete finds `Europe/Amsterdam`; setting it works; without an argument it shows the current one.
-  - [ ] `/todo add` untimed, time-only, explicit `today` + time, date+time; date-only rejected; past time rejected; `9pm` rejected with the 24h hint.
-  - [ ] Server timed to-do before `/sidequest channel` is set → clear error.
-  - [ ] `/todo repeat monthly-day day:31` → reply notes the last-day fallback; next occurrence right.
-  - [ ] `/todo repeat weekly days:mon,thu times:12:00` → description reads correctly, next-occurrence timestamp right.
-  - [ ] 30 subtasks (`/todo subtask add` with `;`) → two selects in `/todo show`; ticking updates the embed; no embed error.
-  - [ ] `/todo add details:True` opens a modal; multi-line text shows in `/todo show`; the "Edit details" button and `/todo details` prefill it; emptying it removes the details.
+  - [x] `/todo add` untimed, time-only, explicit `today` + time, date+time; date-only rejected; past time rejected; `9pm` rejected with the 24h hint.
+  - [x] Server timed to-do before `/sidequest channel` is set → clear error.
+  - [x] `/todo repeat monthly-day day:31` → reply notes the last-day fallback; next occurrence right.
+  - [x] `/todo repeat weekly days:mon,thu times:12:00` → description reads correctly, next-occurrence timestamp right.
+  - [x] 30 subtasks (`/todo subtask add` with `;`) → two selects in `/todo show`; ticking updates the embed; no embed error.
+  - [x] `/todo add details:True` opens a modal; multi-line text shows in `/todo show`; the "Edit details" button and `/todo details` prefill it; emptying it removes the details.
   - [ ] Personal to-do created in a server is visible in DMs with the bot, and not to another user.
-  - [ ] `/todo upcoming` in a server without `scope` → Server / Personal / Both buttons; each shows the right items. In DMs → personal list straight away.
-  - [ ] `/todo upcoming` → check one off early → it disappears and the list refreshes.
-  - [ ] `/todo assign` (select prefilled); a non-assignee without Manage Server can't edit, assign or delete.
-  - [ ] `/todo list` with >10 to-dos pages with Prev/Next; `post:true` posts publicly; `post:true scope:Personal` is refused.
-  - [ ] `/todo edit` title / time / `times`; an option for another rule type gives the "delete and add again" message.
-  - [ ] `/todo delete` → Delete removes it, Cancel keeps it.
-  - [ ] Autocomplete on `todo` options is fast and shows `[S]` / `[P]`.
-  - [ ] A user without a timezone sees the one-time UTC hint on their first command.
+  - [x] `/todo upcoming` in a server without `scope` → Server / Personal / Both buttons; each shows the right items. In DMs → personal list straight away.
+  - [x] `/todo upcoming` → check one off early → it disappears and the list refreshes.
+  - [x] `/todo assign` (select prefilled); a non-assignee without Manage Server can't edit, assign or delete.
+  - [x] `/todo list` with >10 to-dos pages with Prev/Next; `post:true` posts publicly; `post:true scope:Personal` is refused.
+  - [x] `/todo edit` title / time / `times`; an option for another rule type gives the "delete and add again" message.
+  - [x] `/todo delete` → Delete removes it, Cancel keeps it.
+  - [x] Autocomplete on `todo` options is fast and shows `[S]` / `[P]`.
+  - [x] A user without a timezone sees the one-time UTC hint on their first command.
   - **S6 reminders** (added 2026-11-11):
-  - [ ] Server to-do at now+2 min with two assignees → posted in the reminder channel, both pinged (nobody else, no roles); the embed shows details, due time, subtasks.
-  - [ ] Someone who isn't an assignee can press Done (D3) → ephemeral "Checked off", the reminder message disappears.
-  - [ ] Personal timed to-do → arrives as a DM with a working Done button.
-  - [ ] Daily to-do left unchecked → the next occurrence deletes the old message and posts a new one.
-  - [ ] Subtask select on a reminder ticks items and the embed updates; with 30 subtasks each select only changes its own page; on a repeating to-do they're reset for the next occurrence.
-  - [ ] `/todo upcoming` → check off before it's due → that reminder never arrives.
-  - [ ] `/todo delete` while its reminder is up → the reminder message is deleted.
-  - [ ] Restart the bot (`docker compose restart bot`) → an old reminder's Done button and select still work.
-  - [ ] Stop the bot past a due time, start it → one reminder, marked "Late — was due …" (a daily to-do down for several days: still only one).
-  - [ ] Turn off "Allow DMs from server members" → a personal reminder fails → warning on the next command.
-  - [ ] **DM verification (BRIEF §5.4):** a test account that has the app user-installed and shares **no** server with the bot creates a personal timed to-do in DMs. Does the reminder DM arrive? Tell Claude the answer so it can be recorded.
-  - [ ] Heartbeat: `docker compose exec bot cat /tmp/sidequest-heartbeat` shows a recent UTC time.
-  - [ ] All times show as Discord timestamps.
+  - [x] Server to-do at now+2 min with two assignees → posted in the reminder channel, both pinged (nobody else, no roles); the embed shows details, due time, subtasks.
+  - [x] Someone who isn't an assignee can press Done (D3) → ephemeral "Checked off", the reminder message disappears.
+  - [x] Personal timed to-do → arrives as a DM with a working Done button.
+  - [x] Daily to-do left unchecked → the next occurrence deletes the old message and posts a new one.
+  - [x] Subtask select on a reminder ticks items and the embed updates; with 30 subtasks each select only changes its own page; on a repeating to-do they're reset for the next occurrence.
+  - [x] `/todo upcoming` → check off before it's due → that reminder never arrives.
+  - [x] `/todo delete` while its reminder is up → the reminder message is deleted.
+  - [x] Restart the bot (`docker compose restart bot`) → an old reminder's Done button and select still work.
+  - [x] Stop the bot past a due time, start it → one reminder, marked "Late — was due …" (a daily to-do down for several days: still only one).
+  - [x] Turn off "Allow DMs from server members" → a personal reminder fails → warning on the next command.
+  - [x] **DM verification (BRIEF §5.4):** a test account that has the app user-installed and shares **no** server with the bot creates a personal timed to-do in DMs. Does the reminder DM arrive? Tell Claude the answer so it can be recorded.
+  - [x] Heartbeat: `docker compose exec bot cat /tmp/sidequest-heartbeat` shows a recent UTC time.
+  - [x] All times show as Discord timestamps.
+  - **D37 check-off wording:**
+  - [x] `/todo show` → Done on a one-time to-do: the embed and buttons disappear, only "✅ Checked off **title**." remains.
+  - [x] Same on a daily to-do: "✅ Checked off **title**. Next: <timestamp>".
+  - [x] `/todo done`, `/todo upcoming` and a reminder's Done button use the same wording.
+  - **Edit details refresh:**
+  - [x] `/todo show` → Edit details → save: the same message now shows the new details and "📝 Details saved …"; the buttons still work. Emptying the box removes the details from the message.
   - **D36 unset reminder channel:**
-  - [ ] `/sidequest channel clear:True` as admin → warning with the number of timed server to-dos + Unset channel / Cancel. Cancel keeps it; Unset clears it.
-  - [ ] After unsetting: a timed server to-do is refused with the "set a reminder channel" error; a due server reminder isn't posted (marked failed); an earlier reminder's Done still works.
-  - [ ] `clear:True` with a channel → error; `clear:True` when none is set → "no reminder channel set"; non-admin → refused.
+  - [x] `/sidequest channel clear:True` as admin → warning with the number of timed server to-dos + Unset channel / Cancel. Cancel keeps it; Unset clears it.
+  - [x] After unsetting: a timed server to-do is refused with the "set a reminder channel" error; a due server reminder isn't posted (marked failed); an earlier reminder's Done still works.
+  - [x] `clear:True` with a channel → error; `clear:True` when none is set → "no reminder channel set"; non-admin → refused.
 - Done: Tim committed S5 as `4cbcc59`. Tim hasn't run the checklist above yet; S5 and S6 get tested together after S6.
 - Next: S6 Reminders. **S6: add your manual checks to the open S5 checklist above** (Tim's choice, one combined test pass) instead of starting a separate list.
 
@@ -204,3 +214,5 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - The command payload changed, so the global sync runs once on the next start (hash differs).
   - Tests: `tests/integration/test_reminder_channel_clear.py`, `tests/unit/test_admin_clear_warning.py`.
   - Manual checks (added to the combined checklist): see "D36" items above.
+- Same day, Tim: **D37**, built right away (Tim asked; uncommitted): `render.done_text` now always says "✅ Checked off **title**." (+ " Next: <timestamp>" for a repeating to-do with a next occurrence); `/todo upcoming` uses it too instead of its own text. `ShowView._done` replaces the message with only that text (no embed, no buttons) and stops the view. Tests: `tests/unit/test_render.py` (updated + one new case).
+- Same day, Tim: `/todo show` → **Edit details** now refreshes the `/todo show` message on save (new details visible, confirmation as its text), instead of sending a separate reply. `DetailsModal` got an optional `on_saved` callback (ShowView passes `_refresh`); the modal then defers as a message update. `/todo details` still replies separately. `ShowView._refresh` drops the buttons if the view already timed out.
