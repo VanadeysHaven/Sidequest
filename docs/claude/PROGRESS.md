@@ -10,7 +10,7 @@
 | S2 | Data model | ✅ done | `claude/s2-data-model` |
 | S3 | Time & recurrence | ✅ done | `claude/s3-time-and-recurrence` |
 | S4 | Services | ✅ done | `claude/s4-services` |
-| S5 | Commands | 👀 review | `claude/s5-commands` |
+| S5 | Commands | ✅ done | `claude/s5-commands` |
 | S6 | Reminders | ⏭️ next | — |
 | S7 | Ops & hardening | ⬜ todo | — |
 
@@ -119,7 +119,7 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
 - Done: Tim committed S4 as `aadcf55`.
 - Next: S5 Commands.
 
-### 2026-11-11 — S5 Commands built (waiting for review)
+### 2026-11-11 — S5 Commands built
 - All 7 checklist items done on `claude/s5-commands`. Uncommitted.
 - **Checks:** `ruff check .` clean · `ruff format --check .` clean · `pytest` with `TEST_DATABASE_URL`: **388 passed** (+70: render, options, adapter, sync hashing, autocomplete). Nothing tested in Discord itself (see the manual checklist).
 - **Files:** new: `bot/{adapter,errors,render,autocomplete,options}.py`, `bot/commands/{common,todo,todo_list,todo_view,todo_manage,todo_edit,repeat,subtask,settings,admin}.py`, `bot/views/{__init__,base,modals,show,upcoming,listing,assign,confirm}.py`, `scheduler/{__init__,signal}.py`, `services/meta.py`, `tests/unit/test_{render,options,adapter}.py`. Changed: `bot/client.py`, `bot/commands/about.py`, `services/todos.py`, `tests/unit/test_command_sync.py`, `tests/integration/test_services_todos.py`.
@@ -158,5 +158,6 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - [ ] `/todo delete` → Delete removes it, Cancel keeps it.
   - [ ] Autocomplete on `todo` options is fast and shows `[S]` / `[P]`.
   - [ ] A user without a timezone sees the one-time UTC hint on their first command.
-- Next: S6 Reminders.
+- Done: Tim committed S5 as `4cbcc59`. Tim hasn't run the checklist above yet; S5 and S6 get tested together after S6.
+- Next: S6 Reminders. **S6: add your manual checks to the open S5 checklist above** (Tim's choice, one combined test pass) instead of starting a separate list.
 
