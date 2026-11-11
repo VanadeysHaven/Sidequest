@@ -24,7 +24,7 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
 
 ## Future work (Tim's notes, not scheduled)
 
-- **Commands don't work in DMs** (Tim, 2026-11-11; accepted for now). Not investigated yet. First suspect: the dev bot runs with `SYNC_GLOBAL=false`, and by D32 server-only mode clears the global commands, so DMs and user installs get no commands at all. That would make this expected on the dev bot. To check: does it also happen on the production bot (`SYNC_GLOBAL=true`)? If yes, look at the install contexts (`ANYWHERE_INSTALLS` / `ANYWHERE_CONTEXTS` in `bot/commands/common.py`), whether User Install is enabled in the Developer Portal, and whether the user has the app user-installed. Also affects the DM test items in the combined S5+S6 checklist.
+- **Commands don't work in DMs** (Tim, 2026-11-11; accepted for now). Not investigated yet. First suspect: the dev bot runs with `SYNC_GLOBAL=false`, and by D32 server-only mode clears the global commands, so DMs and user installs get no commands at all. That would make this expected on the dev bot. To check: does it also happen on the production bot (`SYNC_GLOBAL=true`)? If yes, look at the install contexts (`ANYWHERE_INSTALLS` / `ANYWHERE_CONTEXTS` in `bot/commands/common.py`), whether User Install is enabled in the Developer Portal, and whether the user has the app user-installed. Also blocks two items in the combined S5+S6 checklist: "personal to-do visible in DMs" and the **DM verification** (can the bot DM a user who has the app user-installed but shares no server with it? Record the answer in BRIEF §5.4). Do both once DM commands work.
 
 ## Handoff log
 
@@ -173,7 +173,7 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - [x] Restart the bot (`docker compose restart bot`) → an old reminder's Done button and select still work.
   - [x] Stop the bot past a due time, start it → one reminder, marked "Late — was due …" (a daily to-do down for several days: still only one).
   - [x] Turn off "Allow DMs from server members" → a personal reminder fails → warning on the next command.
-  - [x] **DM verification (BRIEF §5.4):** a test account that has the app user-installed and shares **no** server with the bot creates a personal timed to-do in DMs. Does the reminder DM arrive? Tell Claude the answer so it can be recorded.
+  - [ ] **DM verification (BRIEF §5.4, postponed until DMs work — see Future work):** a test account that has the app user-installed and shares **no** server with the bot creates a personal timed to-do in DMs. Does the reminder DM arrive? Tell Claude the answer so it can be recorded.
   - [x] Heartbeat: `docker compose exec bot cat /tmp/sidequest-heartbeat` shows a recent UTC time.
   - [x] All times show as Discord timestamps.
   - **D37 check-off wording:**
@@ -207,7 +207,8 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - DM verification (user-install without a shared server) is not done: Claude can't use Discord. Recorded as open in BRIEF §5.4 and on the checklist; the code handles both answers.
 - **Manual check (Tim):** the S6 items are added to the open S5 checklist above (one combined test pass, as agreed).
 - Done: Tim committed S6 as `ba5c123`. The combined S5+S6 manual test pass (incl. the DM verification) is still open.
-- Next: S7 Ops & hardening. **S7: ask Tim for the result of the DM verification and record it in BRIEF §5.4.**
+- Next: S7 Ops & hardening.
+- 2026-11-11: Tim ran the combined S5+S6 (+D36, D37, details refresh) manual pass: all items pass except "personal to-do visible in DMs", which is blocked by commands not working in DMs (see Future work). The DM verification is postponed (Tim): it needs working DM commands first.
 - Same day, Tim: unsetting the reminder channel must be possible → **D36**, built right away on `claude/s6-reminders` (Tim asked; uncommitted):
   - `services/settings.py`: `clear_reminder_channel(uow, actor)` (Manage Server; `InvalidOperation` if none is set) and `count_scheduled_server_todos(uow, guild_id)` (open server to-dos with a pending occurrence). The Manage Server message now says "change" instead of "set".
   - `/sidequest channel`: `channel` is now optional, new option `clear: bool`. Both → error; neither → "Pick a channel, or use `clear:True`". `clear:True` replies with `admin.clear_warning(...)` + `ClearChannelConfirmView` (Unset channel / Cancel, in `views/confirm.py`); the button re-checks Manage Server in the service.
