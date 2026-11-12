@@ -13,7 +13,8 @@
 | S5 | Commands | ✅ done | `claude/s5-commands` |
 | S6 | Reminders | ✅ done | `claude/s6-reminders` |
 | S7 | Ops & hardening | ✅ done | `claude/s7-ops` |
-| S8 | Server lists (no personal lists/DMs; collaborators) | 👀 waiting for review | `claude/s8-server-lists` |
+| S8 | Server lists (no personal lists/DMs; collaborators) | ✅ done | `claude/s8-server-lists` |
+| S9 | Repeat every N weeks | ⏭️ next | `claude/s9-repeat-every-n-weeks` |
 
 Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's review/commit · ✅ done
 
@@ -274,3 +275,10 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - `committed_sessions` fixture also truncates `todo_lists`.
   - The `/todo repeat` scope→list swap was a 4×4-line mechanical edit, done with a script instead of a Haiku agent.
 - **Manual test checklist (Tim, dev bot):** the list in `segments/S8-server-lists.md` §7. Also: untick **User Install** in the Developer Portal (RUNBOOK §2).
+- Done: Tim committed S8 as `84a1c7e`.
+
+### 2026-11-12 — S9 brief written
+- Tim: reminders that repeat every x weeks. Brief: `segments/S9-repeat-every-n-weeks.md` (decisions D54–D59; the S9 session appends them to BRIEF §3).
+- No code changed and no branch created (the working tree had an uncommitted change in `bot/views/collaborators.py`, so switching branches wasn't allowed). The S9 session creates `claude/s9-repeat-every-n-weeks`.
+- Same day, Tim answered: `every` is an option on `/todo repeat weekly`; first reminder is the soonest possible; weeks start on Monday; `start` also works with `every:1` as "don't start before this date" (weekly only); range 1–52. The brief is updated and final (D54–D59).
+- Next: S9.

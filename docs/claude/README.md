@@ -30,6 +30,7 @@ the interfaces it needs from earlier segments).
 | `segments/S6-reminders.md` | Scheduler loop, reminder messages, Done button, DMs |
 | `segments/S7-ops-and-hardening.md` | Health, backups, retention, runbook, final review |
 | `segments/S8-server-lists.md` | Drop personal lists/DMs; named server lists, default list per user, collaborators, ownership transfer, migration 0003 |
+| `segments/S9-repeat-every-n-weeks.md` | Weekly rules that repeat every N weeks (`every`, `start`); no migration |
 
 ## Kick-off prompt (for Tim)
 
