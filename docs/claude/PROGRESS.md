@@ -12,7 +12,8 @@
 | S4 | Services | ✅ done | `claude/s4-services` |
 | S5 | Commands | ✅ done | `claude/s5-commands` |
 | S6 | Reminders | ✅ done | `claude/s6-reminders` |
-| S7 | Ops & hardening | 👀 waiting for Tim's review/commit | `claude/s7-ops` |
+| S7 | Ops & hardening | ✅ done | `claude/s7-ops` |
+| S8 | Server lists (no personal lists/DMs; collaborators) | ⏭️ next | `claude/s8-server-lists` |
 
 Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's review/commit · ✅ done
 
@@ -245,3 +246,10 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - [ ] Restore round trip: create a to-do, `./update.sh` (makes a backup), delete the to-do, `scripts/restore-backup.sh backups/<newest>.sql.gz` → the to-do is back and the bot is healthy.
   - [ ] Optional: `HISTORY_RETENTION_DAYS=30` in `configs/.env`, `docker compose up -d --force-recreate bot` → log shows `History cleanup on: keeping 30 days`.
 - Next: none. S7 is the last segment. Open items: the combined S5+S6 checklist items blocked by DM commands (Future work), and the S1 Developer Portal checklist.
+- Done: Tim committed S7 as `669478c`.
+
+### 2026-11-12 — S8 brief written
+- Tim: the personal/server list split doesn't work. Drop personal lists and DMs; a server gets several named lists with a per-user default (`/settings`), list collaborators and ownership transfer. Tim answered the open design questions in chat; the result is `segments/S8-server-lists.md` (decisions D40–D53, to be appended to BRIEF §3 by the S8 session).
+- Branch `claude/s8-server-lists` was created from `claude/s7-ops` for this brief. No code changed.
+- Same day, Tim confirmed the open points: `/todo move` (D48) and the default-list rule (D53) stay; `/todo upcoming` shows one list, the user's own default-list setting or else a required `list` option (D49); non-collaborator assignees get pinged but can't check off; the Default List is created on first use. Only Manage Server may rename the Default List (D51); anyone may work on its to-dos; nobody may delete it.
+- Next: S8. This brief makes the DM future-work item obsolete; S8 closes it.
