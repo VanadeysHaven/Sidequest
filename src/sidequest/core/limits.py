@@ -1,5 +1,7 @@
 """Size limits (BRIEF §4.11)."""
 
+from datetime import timedelta
+
 # Sidequest's own limits (D29).
 TITLE_MAX = 200
 DETAILS_MAX = 4000
@@ -20,6 +22,10 @@ LISTS_MAX = 25
 """Per server; keeps the delete flow's move select to one menu."""
 COLLABORATORS_MAX = 25
 """Per list; one user select."""
+
+# Undo a check-off (D61).
+UNDO_WINDOW = timedelta(hours=2)
+"""How long after a check-off it can be undone (the Undo view's timeout, too)."""
 
 # Discord's limits that rendering must respect.
 SELECT_OPTIONS_MAX = 25

@@ -22,6 +22,8 @@ ping the assignees. Sidequest only works in servers (no DMs).
 - **Timezones** per user (or per to-do). Times are shown as Discord timestamps, so everyone
   sees them in their own timezone.
 - **Upcoming view** to check things off before they're due.
+- **Undo** on every check-off for 2 hours (a reminder comes back, pinging again). Checking
+  off someone else's to-do asks first.
 - Runs on a Pi: PostgreSQL in Docker, automatic backups on update, health check and
   automatic restart when stuck, optional cleanup of old history.
 

@@ -102,6 +102,40 @@ def done_text(todo: TodoView) -> str:
     return text
 
 
+def undone_text(todo: TodoView, channel_id: int | None = None) -> str:
+    """The reply after undoing a check-off (D68); `channel_id`: where the reminder is back."""
+    text = f"↩️ Undone: **{esc(todo.title)}** is open again."
+    if channel_id is not None:
+        text += f" The reminder is back in <#{channel_id}>."
+    return text
+
+
+def and_join(parts: Sequence[str]) -> str:
+    """ "A", "A and B", "A, B and C"."""
+    if len(parts) <= 1:
+        return "".join(parts)
+    return f"{', '.join(parts[:-1])} and {parts[-1]}"
+
+
+def check_off_prompt(todo: TodoView) -> str:
+    """Asked before someone who isn't an assignee checks it off (D67). Mentions render as
+    names; the reply never pings."""
+    who = and_join([f"<@{user_id}>" for user_id in todo.assignee_ids])
+    if not who:
+        return f"**{esc(todo.title)}** isn't assigned to you. Check it off anyway?"
+    return f"**{esc(todo.title)}** is assigned to {who}, not you. Check it off anyway?"
+
+
+def undo_options(titles: Sequence[str]) -> list[discord.SelectOption]:
+    """The undo select of `/todo upcoming` (D69): newest first as "N. title", value = the
+    index in `titles` (oldest first)."""
+    newest_first = list(enumerate(titles))[::-1][:SELECT_OPTIONS_MAX]
+    return [
+        discord.SelectOption(label=cut(f"{number}. {title}", SELECT_LABEL_MAX), value=str(index))
+        for number, (index, title) in enumerate(newest_first, start=1)
+    ]
+
+
 # --- detail embed ------------------------------------------------------------------------
 
 

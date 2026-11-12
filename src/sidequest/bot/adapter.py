@@ -27,7 +27,7 @@ from sidequest.scheduler.signal import ScheduleSignal
 from sidequest.services import meta
 from sidequest.services import settings as user_settings
 from sidequest.services.actor import Actor
-from sidequest.services.dto import DueInput
+from sidequest.services.dto import DueInput, DueReminder
 from sidequest.services.effects import DeleteMessage, Effect, Outcome
 from sidequest.services.uow import Uow, UowFactory
 
@@ -78,8 +78,19 @@ class _HasDeps(Protocol):
     deps: BotDeps
 
 
+class _Reposts(Protocol):
+    async def repost(self, reminder: DueReminder) -> None: ...
+
+
 def deps(interaction: discord.Interaction) -> BotDeps:
     return cast(_HasDeps, interaction.client).deps
+
+
+async def repost(interaction: discord.Interaction, reminder: DueReminder) -> None:
+    """Post a reminder again right away (an undone check-off, D64): `SidequestClient.repost`."""
+    client = interaction.client
+    if hasattr(client, "repost"):
+        await cast(_Reposts, client).repost(reminder)
 
 
 def uows(interaction: discord.Interaction) -> UowFactory:

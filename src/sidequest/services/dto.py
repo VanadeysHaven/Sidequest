@@ -130,6 +130,42 @@ class DueReminder(StrictModel):
     """Messages to delete first (the previous reminder, now missed)."""
 
 
+class SubtaskTick(StrictModel):
+    """A subtask tick that a check-off reset (repeating to-dos, D4)."""
+
+    id: int
+    done_at: datetime
+    done_by: int | None
+
+
+class UndoToken(StrictModel):
+    """What undoing one check-off needs (D63, D66). Kept in the bot's memory only; the
+    undo service re-checks all of it against the database."""
+
+    todo_id: int
+    occurrence_id: int | None
+    """The occurrence that was checked off; None for a one-time to-do checked off without
+    an open occurrence (untimed, or its reminder failed)."""
+    previous: OccurrenceStatus | None
+    """Its status before the check-off (pending or sent)."""
+    followup_id: int | None
+    """Repeating to-dos: the pending occurrence right after the check-off. Created by the
+    check-off when `previous` is pending (undo cancels it); already there when it was sent."""
+    ticks: tuple[SubtaskTick, ...]
+    """Subtask ticks the check-off reset."""
+
+
+class CheckedOff(StrictModel):
+    todo: TodoView
+    undo: UndoToken
+
+
+class Undone(StrictModel):
+    todo: TodoView
+    repost: DueReminder | None
+    """The reminder to post again (it was up when it was checked off, D64)."""
+
+
 class GuildSettingsView(StrictModel):
     guild_id: int
     reminder_channel_id: int | None

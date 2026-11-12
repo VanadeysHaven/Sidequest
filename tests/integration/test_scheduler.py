@@ -14,7 +14,7 @@ from sidequest.db.models import Occurrence
 from sidequest.scheduler.loop import Scheduler
 from sidequest.scheduler.notifier import Failed, Posted
 from sidequest.scheduler.signal import ScheduleSignal
-from sidequest.services import occurrences, settings, todos
+from sidequest.services import occurrences, settings, todos, undo
 from sidequest.services.actor import Actor
 from sidequest.services.dto import DueInput, DueReminder
 from sidequest.services.effects import DeleteMessage
@@ -398,3 +398,27 @@ async def test_every_two_weeks_reminder_repeats_fourteen_days_later(
     assert pending.status == OccurrenceStatus.PENDING
     assert pending.due_at == first_due + timedelta(days=14)
     assert len(_mine(notifier.posted, todo_id)) == 1
+
+
+async def test_undo_of_early_check_off_restores_the_original_reminder(
+    committed_sessions: async_sessionmaker[AsyncSession], clock: FixedClock, tmp_path: Path
+) -> None:
+    uows = UowFactory(committed_sessions, clock)
+    notifier = FakeNotifier()
+    scheduler = _scheduler(uows, notifier, clock, tmp_path)
+    await _set_channel(uows)
+    todo_id = await _create_daily(uows, title="stretch")
+    [original] = await _occurrences(uows, todo_id)
+
+    async with uows() as uow:
+        checked = await occurrences.complete_occurrence(uow, member(OWNER, GUILD_A), original.id)
+    async with uows() as uow:
+        await undo.undo(uow, member(OWNER, GUILD_A), checked.value.undo)
+
+    clock.set(utc(8, 8))  # the original due time
+    await scheduler.post_due()
+    assert [r.occurrence.id for r in _mine(notifier.posted, todo_id)] == [original.id]
+    occs = await _occurrences(uows, todo_id)
+    assert occs[0].id == original.id
+    assert occs[0].status == OccurrenceStatus.SENT
+    assert occs[1].status == OccurrenceStatus.CANCELLED

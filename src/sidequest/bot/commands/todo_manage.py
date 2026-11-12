@@ -5,8 +5,14 @@ from discord import app_commands
 
 from sidequest.bot import adapter, autocomplete, render
 from sidequest.bot.views.assign import AssignView
-from sidequest.bot.views.confirm import DeleteConfirmView
+from sidequest.bot.views.confirm import (
+    CheckOffConfirmView,
+    DeleteConfirmView,
+    must_confirm,
+    not_checked_off,
+)
 from sidequest.bot.views.modals import DetailsModal
+from sidequest.bot.views.undo import UndoView
 from sidequest.core.errors import Forbidden
 from sidequest.core.limits import ASSIGNEES_MAX
 from sidequest.services import todos
@@ -29,15 +35,40 @@ def done_command() -> app_commands.Command:  # type: ignore[type-arg]
     @app_commands.describe(todo="The to-do")
     @app_commands.autocomplete(todo=autocomplete.todo)
     async def done(interaction: discord.Interaction, todo: str) -> None:
+        todo_id = adapter.parse_id(todo)
         await adapter.defer(interaction)
         actor = adapter.actor_from(interaction)
         async with adapter.uows(interaction)() as uow:
-            out = await todos.complete(uow, actor, adapter.parse_id(todo))
+            current = await todos.get(uow, actor, todo_id)
             notes = await adapter.collect_notes(uow, actor.user_id)
-        view = await adapter.apply(interaction, out)
-        await adapter.reply(interaction, render.done_text(view), notes=notes)
+        if must_confirm(actor.user_id, current):
+            # D67: not an assignee, so ask first.
+            async def confirmed(confirm: discord.Interaction) -> None:
+                await confirm.response.defer()
+                text, undo_view = await _check_off(confirm, todo_id)
+                undo_view.message = await confirm.edit_original_response(
+                    content=text, view=undo_view, allowed_mentions=adapter.NO_MENTIONS
+                )
+
+            await adapter.reply(
+                interaction,
+                render.check_off_prompt(current),
+                notes=notes,
+                view=CheckOffConfirmView(interaction.user.id, confirmed, not_checked_off),
+            )
+            return
+        text, undo_view = await _check_off(interaction, todo_id)
+        await adapter.reply(interaction, text, notes=notes, view=undo_view)
 
     return done
+
+
+async def _check_off(interaction: discord.Interaction, todo_id: int) -> tuple[str, UndoView]:
+    """Check off; returns the reply text and its Undo button (D60)."""
+    async with adapter.uows(interaction)() as uow:
+        out = await todos.complete(uow, adapter.actor_from(interaction), todo_id)
+    checked = await adapter.apply(interaction, out)
+    return render.done_text(checked.todo), UndoView(interaction.user.id, checked.undo)
 
 
 def details_command() -> app_commands.Command:  # type: ignore[type-arg]

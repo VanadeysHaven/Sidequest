@@ -93,11 +93,11 @@ bot/ (discord)   scheduler/ (no discord)   [web/ later]
 | `cli.py`, `config.py`, `logging.py`, `health.py` | CLI (`sidequest`, `migrate`, `healthcheck`), settings, logging, heartbeat watchdog |
 | `core/` | `clock` (`Clock` protocol, `SystemClock`), `timeparse`, `tz`, `recurrence` (rules, `next_occurrence`, `describe`, `anchored`), `discord_time`, `enums`, `errors`, `limits`, `text` (`bold()` for service messages) |
 | `db/` | `base`, `models` (full schema), `session`, `migrate` |
-| `services/` | `todos`, `occurrences` (check-off, upcoming, scheduler API), `subtasks`, `lists`, `settings`, `permissions`, `retention`, `meta`; plumbing: `uow`, `actor`, `dto`, `effects`, `model` (`StrictModel`), `_common` (shared helpers) |
+| `services/` | `todos`, `occurrences` (check-off, upcoming, scheduler API), `undo`, `subtasks`, `lists`, `settings`, `permissions`, `retention`, `meta`; plumbing: `uow`, `actor`, `dto`, `effects`, `model` (`StrictModel`), `_common` (shared helpers) |
 | `scheduler/` | `loop` (`Scheduler`), `notifier` (Protocol), `signal` (`ScheduleSignal`), `retention` |
 | `bot/` | `client`, `adapter` (glue: `actor_from`, `uows`, `apply`, `reply`, `defer`, …), `render` (all embeds/text, no I/O), `options` (option → rule/patch parsing), `autocomplete`, `errors`, `notifier` (`DiscordNotifier`) |
 | `bot/commands/` | `todo` (+ `todo_edit`, `todo_list`, `todo_manage`, `todo_view`), `repeat`, `subtask`, `lists`, `settings`, `admin`, `about`, `common` |
-| `bot/views/` | `base` (`BaseView`/`BaseModal`, 5-min, owner-only), `reminder` (persistent Done + subtask selects), `show`, `upcoming`, `listing`, `assign`, `confirm`, `list_delete`, `collaborators`, `modals` |
+| `bot/views/` | `base` (`BaseView`/`BaseModal`, 5-min, owner-only), `reminder` (persistent Done + subtask selects), `show`, `upcoming`, `listing`, `assign`, `confirm` (+ check-off confirm), `undo`, `list_delete`, `collaborators`, `modals` |
 | `migrations/versions/` | `0001`–`0003`. New: `alembic revision --rev-id 0004 -m "..."` |
 | `tests/` | `unit/`, `integration/` (real Postgres), `support/` (`FixedClock`, `FakeNotifier`) |
 
@@ -183,6 +183,19 @@ again").
 - **Done** completes the occurrence (and a one-time to-do) and **deletes the reminder message**. The
   reply everywhere is "✅ Checked off **title**." plus " Next: <timestamp>" for repeating to-dos
   (`render.done_text`). `/todo show` → Done turns the message into just that line.
+- **Non-assignees confirm** (D67): anyone who isn't an assignee (owners and Manage Server included)
+  gets "**title** is assigned to @A and @B, not you. Check it off anyway?" before checking off, in all
+  four places. Ticking subtasks never asks. `views/confirm.py` (`must_confirm`, `CheckOffConfirmView`).
+- **Undo** (D60–D69): every check-off reply has an Undo button (`/todo upcoming`: an "Undo a
+  check-off…" select). The check-off services return `CheckedOff(todo, undo: UndoToken)`; the token
+  (previous occurrence status, the pending follow-up's id, reset subtask ticks) lives only in the
+  view's memory (2-hour timeout, gone after a restart). `services/undo.py` re-checks everything:
+  only the person who checked it off, within 2 h (`UNDO_WINDOW`), while they may still check off.
+  It restores the to-do/occurrence, cancels the follow-up an early check-off created, restores ticks
+  for subtasks that still exist and are unticked. A reminder that was up is marked `sent` again with
+  `sent_at = now` and no message, and the bot re-posts it with pings (`SidequestClient.repost` →
+  `Scheduler.deliver`). Refused when the follow-up is no longer pending (sent → "already went out",
+  done → "undo the later check-off first", cancelled by an edit → "changed"), or on a title clash.
 - Checking off a pending occurrence early (`/todo upcoming`, `/todo done`) means that reminder never
   posts; for repeating to-dos the one after it is scheduled.
 - A new occurrence firing while the previous reminder is unchecked deletes it and marks it `missed`.
@@ -240,6 +253,10 @@ and are added here and in the feature's brief.
 | D39 | Details render markdown; titles are fully escaped. |
 | D40–D53 | Server-only, no DMs · named lists (≤ 25) · ownerless Default List · unique list names and open titles (case-insensitive) · per-user default list · owners, collaborators, transfer · list delete asks delete/move/cancel · `/todo move` · one list per view · permissions table in §4. |
 | D54–D59 | Weekly `every` 1–52 and `start` (anchored to the soonest reminder when omitted), Mon–Sun weeks, JSON keys only when non-default (no migration). |
+| D60–D62 | Undo on every check-off reply, for 2 hours, in memory only (not after a restart); only the person who checked it off, while they may still check off on that list. |
+| D63–D66 | Undo restores the state from before (status, follow-up cancelled, subtask ticks); a reminder that was up is re-posted with pings; refused when it would clash with what happened since; no storage change (`UndoToken`). |
+| D67 | Non-assignees (everyone, incl. owners and Manage Server) confirm before checking off; subtasks never ask. |
+| D68/D69 | Undo wording ("↩️ Undone: **title** is open again."); `/todo upcoming` gets an undo select (newest first, any order). |
 
 **Out of scope for now:** web frontend · snooze · role assignees · every N days / N months · start dates
 for daily/monthly rules · date-only to-dos · per-server default timezone · localisation · digests.

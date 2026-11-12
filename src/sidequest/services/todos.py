@@ -22,7 +22,7 @@ from sidequest.db.models import Occurrence, Todo, TodoAssignee, TodoList
 from sidequest.services import _common as c
 from sidequest.services import lists
 from sidequest.services.actor import Actor
-from sidequest.services.dto import DueInput, ListFilter, Page, TodoPatch, TodoView
+from sidequest.services.dto import CheckedOff, DueInput, ListFilter, Page, TodoPatch, TodoView
 from sidequest.services.effects import Effect, Outcome
 from sidequest.services.uow import Uow
 
@@ -315,24 +315,27 @@ async def set_assignees(
     return Outcome(value=view)
 
 
-async def complete(uow: Uow, actor: Actor, todo_id: int) -> Outcome[TodoView]:
+async def complete(uow: Uow, actor: Actor, todo_id: int) -> Outcome[CheckedOff]:
     """One-time: done (closing its reminder). Repeating: check off the current occurrence
-    (the sent reminder if there is one, else the next pending one)."""
+    (the sent reminder if there is one, else the next pending one). The value carries
+    the token to undo it (D60)."""
     todo = await c.load_todo(uow, actor, todo_id, lock=True)
     c.require_open(todo)
     c.require_complete(actor, todo)
     occs = (await c.open_occurrences(uow, [todo.id]))[todo.id]
     active = c.find(occs, OccurrenceStatus.SENT) or c.find(occs, OccurrenceStatus.PENDING)
     if active is not None:
-        effects, changed = await c.finish_occurrence(uow, actor, todo, active, occs)
+        effects, changed, token = await c.finish_occurrence(uow, actor, todo, active, occs)
     elif todo.kind == TodoKind.ONCE:
         c.mark_todo_done(todo, actor, uow.clock.now())
-        effects, changed = [], False
+        effects, changed, token = [], False, c.undo_token(todo)
     else:
         raise InvalidOperation("This repeating to-do has nothing to check off right now.")
     view = await c.view_of(uow, actor, todo)
     await uow.session.commit()
-    return Outcome(value=view, effects=effects, changed_schedule=changed)
+    return Outcome(
+        value=CheckedOff(todo=view, undo=token), effects=effects, changed_schedule=changed
+    )
 
 
 async def delete(uow: Uow, actor: Actor, todo_id: int) -> Outcome[TodoView]:

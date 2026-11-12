@@ -11,7 +11,7 @@ from sidequest.db.models import GuildSettings, Occurrence, Todo
 from sidequest.services import _common as c
 from sidequest.services import lists, subtasks
 from sidequest.services.actor import Actor
-from sidequest.services.dto import DueReminder, TodoView, UpcomingItem
+from sidequest.services.dto import CheckedOff, DueReminder, TodoView, UpcomingItem
 from sidequest.services.effects import DeleteMessage, Effect, Outcome
 from sidequest.services.uow import Uow
 
@@ -89,21 +89,43 @@ async def _lock_occurrence(
     return todo, occ, open_occs
 
 
-async def complete_occurrence(uow: Uow, actor: Actor, occurrence_id: int) -> Outcome[TodoView]:
+async def complete_occurrence(uow: Uow, actor: Actor, occurrence_id: int) -> Outcome[CheckedOff]:
     """Check off one occurrence (Done button, or early from /todo upcoming).
 
     pending → done (the reminder is never sent); sent → done + delete its message.
     One-time: the to-do is done. Repeating: subtasks reset, next occurrence scheduled.
     Only the list's owner and collaborators (any member on the fallback list, D50/D51).
+    The value carries the token to undo it (D60).
     """
     todo, occ, open_occs = await _lock_occurrence(uow, actor, occurrence_id)
     if occ.status not in c.OPEN_OCCURRENCE or todo.status != TodoStatus.OPEN:
         raise InvalidOperation("That one is already checked off.")
     c.require_complete(actor, todo)
-    effects, changed = await c.finish_occurrence(uow, actor, todo, occ, open_occs)
+    effects, changed, token = await c.finish_occurrence(uow, actor, todo, occ, open_occs)
     view = await c.view_of(uow, actor, todo)
     await uow.session.commit()
-    return Outcome(value=view, effects=effects, changed_schedule=changed)
+    return Outcome(
+        value=CheckedOff(todo=view, undo=token), effects=effects, changed_schedule=changed
+    )
+
+
+async def todo_for(uow: Uow, actor: Actor, occurrence_id: int) -> TodoView:
+    """The to-do of one occurrence, as the actor sees it (for the non-assignee
+    confirmation on a reminder's Done, D67). No lock."""
+    todo_id = await uow.session.scalar(
+        select(Occurrence.todo_id).where(Occurrence.id == occurrence_id)
+    )
+    if todo_id is None:
+        raise NotFound(OCCURRENCE_NOT_FOUND)
+    try:
+        todo = await c.load_todo(uow, actor, todo_id)
+    except NotFound:
+        raise NotFound(OCCURRENCE_NOT_FOUND) from None
+    if todo.status == TodoStatus.CANCELLED:
+        raise NotFound(OCCURRENCE_NOT_FOUND)
+    view = await c.view_of(uow, actor, todo)
+    await uow.session.commit()
+    return view
 
 
 async def tick_subtasks(
@@ -233,6 +255,13 @@ async def unposted_sent(uow: Uow, older_than: datetime) -> list[DueReminder]:
     occs = list(rows)
     todos = await _load_todos(uow, {o.todo_id for o in occs})
     return await _reminders(uow, [(o, todos[o.todo_id], []) for o in occs])
+
+
+async def due_reminder(uow: Uow, occ: Occurrence, todo: Todo) -> DueReminder:
+    """One sent occurrence as a reminder to post (an undone check-off, D64). `todo` must
+    be loaded with `c.todo_load()`."""
+    (reminder,) = await _reminders(uow, [(occ, todo, [])])
+    return reminder
 
 
 async def next_due_at(uow: Uow) -> datetime | None:

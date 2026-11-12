@@ -105,7 +105,7 @@ async def test_completing_pending_once_todo_early_closes_occurrence(uow: Uow) ->
     tid = out.value.id
     done = await todos.complete(uow, actor, tid)
     assert done.effects == []
-    assert done.value.status == TodoStatus.DONE
+    assert done.value.todo.status == TodoStatus.DONE
     occs = await _occurrences(uow, tid)
     assert [o.status for o in occs] == [OccurrenceStatus.DONE]
 
@@ -225,7 +225,7 @@ async def test_collaborator_may_edit_and_complete_on_owned_list(uow: Uow) -> Non
     renamed = await todos.edit(uow, other, tid, TodoPatch(title="renamed"))
     assert renamed.value.title == "renamed"
     done = await todos.complete(uow, other, tid)
-    assert done.value.status == TodoStatus.DONE
+    assert done.value.todo.status == TodoStatus.DONE
 
 
 async def test_any_member_may_edit_and_complete_on_default_list(uow: Uow) -> None:
@@ -235,7 +235,7 @@ async def test_any_member_may_edit_and_complete_on_default_list(uow: Uow) -> Non
     renamed = await todos.edit(uow, other, tid, TodoPatch(title="renamed"))
     assert renamed.value.title == "renamed"
     done = await todos.complete(uow, other, tid)
-    assert done.value.status == TodoStatus.DONE
+    assert done.value.todo.status == TodoStatus.DONE
 
 
 async def test_autocomplete_returns_list_name_and_prefix_matches_first(uow: Uow) -> None:

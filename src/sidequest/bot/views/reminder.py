@@ -17,6 +17,8 @@ import discord
 
 from sidequest.bot import adapter, render
 from sidequest.bot.errors import report_error
+from sidequest.bot.views.confirm import CheckOffConfirmView, must_confirm, not_checked_off
+from sidequest.bot.views.undo import UndoView
 from sidequest.core.errors import InvalidOperation, NotFound
 from sidequest.core.limits import SELECT_OPTIONS_MAX
 from sidequest.services import occurrences
@@ -61,19 +63,21 @@ def reminder_actor(interaction: discord.Interaction) -> Actor:
     )
 
 
-async def _delete_reminder(interaction: discord.Interaction) -> None:
-    if interaction.message is None:
+async def _delete_reminder(message: discord.Message | None) -> None:
+    if message is None:
         return
     with contextlib.suppress(discord.NotFound, discord.Forbidden):
-        await interaction.message.delete()
+        await message.delete()
 
 
-async def _delete_if_stale(interaction: discord.Interaction, occurrence_id: int) -> bool:
+async def _delete_if_stale(
+    interaction: discord.Interaction, occurrence_id: int, message: discord.Message | None
+) -> bool:
     """Delete the reminder message if its occurrence is closed or gone. True if deleted."""
     async with adapter.uows(interaction)() as uow:
         live = await occurrences.is_live(uow, occurrence_id)
     if not live:
-        await _delete_reminder(interaction)
+        await _delete_reminder(message)
     return not live
 
 
@@ -111,20 +115,58 @@ class DoneButton(
     async def _done(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
         actor = reminder_actor(interaction)
+        reminder = interaction.message
+        todo = await self._live_todo(interaction, actor)
+        if todo is not None and must_confirm(actor.user_id, todo):
+            # D67: ask first; the reminder stays up until they confirm.
+            async def confirmed(confirm: discord.Interaction) -> None:
+                await confirm.response.defer()
+                text, undo_view = await self._check_off(confirm, reminder)
+                undo_view.message = await confirm.edit_original_response(
+                    content=text, view=undo_view, allowed_mentions=adapter.NO_MENTIONS
+                )
+
+            await adapter.reply(
+                interaction,
+                render.check_off_prompt(todo),
+                view=CheckOffConfirmView(interaction.user.id, confirmed, not_checked_off),
+            )
+            return
+        text, undo_view = await self._check_off(interaction, reminder)
+        await adapter.reply(interaction, text, view=undo_view)
+
+    async def _live_todo(self, interaction: discord.Interaction, actor: Actor) -> TodoView | None:
+        """The to-do, if this reminder is still the live one (else the check-off itself
+        reports what happened and clears the leftover message)."""
+        try:
+            async with adapter.uows(interaction)() as uow:
+                todo = await occurrences.todo_for(uow, actor, self.occurrence_id)
+        except NotFound:
+            return None
+        if todo.reminder is None or todo.reminder.id != self.occurrence_id:
+            return None
+        return todo
+
+    async def _check_off(
+        self, interaction: discord.Interaction, reminder: discord.Message | None
+    ) -> tuple[str, UndoView]:
+        """Check off, delete the reminder message; returns the reply text and its Undo."""
+        actor = reminder_actor(interaction)
         try:
             async with adapter.uows(interaction)() as uow:
                 out = await occurrences.complete_occurrence(uow, actor, self.occurrence_id)
         except (InvalidOperation, NotFound) as error:
             # Already checked off, missed, or the to-do was deleted: clear the leftover.
-            stale = await _delete_if_stale(interaction, self.occurrence_id)
+            stale = await _delete_if_stale(interaction, self.occurrence_id, reminder)
             if stale and isinstance(error, NotFound):
                 raise NotFound(GONE) from error
             raise
-        todo = await adapter.apply(interaction, out)
-        message = interaction.message
-        if message is not None and not any(e.message_id == message.id for e in out.effects):
-            await _delete_reminder(interaction)
-        await adapter.reply(interaction, render.done_text(todo))
+        checked = await adapter.apply(interaction, out)
+        if reminder is not None and not any(e.message_id == reminder.id for e in out.effects):
+            await _delete_reminder(reminder)
+        # The Undo button sits on an ephemeral reply to a reminder: same actor rules.
+        undo_view = UndoView(interaction.user.id, checked.undo, actor_for=reminder_actor)
+        return render.done_text(checked.todo), undo_view
 
 
 class SubtaskSelect(
@@ -180,7 +222,7 @@ class SubtaskSelect(
                     uow, actor, self.occurrence_id, ticked, within
                 )
         except (InvalidOperation, NotFound):
-            await _delete_if_stale(interaction, self.occurrence_id)
+            await _delete_if_stale(interaction, self.occurrence_id, interaction.message)
             raise
         todo = await adapter.apply(interaction, out)
         occurrence = todo.reminder

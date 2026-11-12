@@ -27,6 +27,7 @@ from sidequest.health import HEARTBEAT_FILE, Watchdog
 from sidequest.scheduler.loop import Scheduler
 from sidequest.scheduler.retention import HistoryPurger
 from sidequest.scheduler.signal import ScheduleSignal
+from sidequest.services.dto import DueReminder
 from sidequest.services.uow import UowFactory
 
 log = logging.getLogger(__name__)
@@ -85,6 +86,13 @@ class SidequestClient(discord.Client):
         # Exits the process if the heartbeat goes stale, so Docker restarts the bot (D38).
         self._watchdog = Watchdog(HEARTBEAT_FILE)
         self._watchdog.start()
+
+    async def repost(self, reminder: DueReminder) -> None:
+        """Post a reminder whose check-off was undone (D64): post, attach the message id,
+        or mark it failed. Without a running scheduler nothing happens here; its crash
+        recovery posts the reminder within ~1–2 minutes once it runs."""
+        if self._scheduler is not None:
+            await self._scheduler.deliver(reminder)
 
     def _start_history_cleanup(self) -> None:
         """Daily deletion of old history (D8), only when HISTORY_RETENTION_DAYS is set."""

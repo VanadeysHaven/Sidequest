@@ -450,3 +450,83 @@ def test_list_options_cut_long_names_to_100() -> None:
     (option,) = render.list_options([make_list(id=1, name="N" * 150)])
     assert len(option.label) == 100
     assert option.label.endswith("…")
+
+
+# --- undo and check-off prompt -----------------------------------------------------------
+
+
+def test_undone_text_without_channel() -> None:
+    assert render.undone_text(make_todo()) == "↩️ Undone: **Buy milk** is open again."
+
+
+def test_undone_text_names_the_reminder_channel() -> None:
+    assert render.undone_text(make_todo(), channel_id=42) == (
+        "↩️ Undone: **Buy milk** is open again. The reminder is back in <#42>."
+    )
+
+
+def test_undone_text_escapes_title() -> None:
+    title = "*x* @everyone"
+    assert render.undone_text(make_todo(title=title)) == (
+        f"↩️ Undone: **{render.esc(title)}** is open again."
+    )
+
+
+def test_and_join_parts() -> None:
+    cases = [
+        ([], ""),
+        (["A"], "A"),
+        (["A", "B"], "A and B"),
+        (["A", "B", "C"], "A, B and C"),
+    ]
+    for parts, expected in cases:
+        assert render.and_join(parts) == expected, parts
+
+
+def test_check_off_prompt_one_assignee() -> None:
+    todo = make_todo(title="t", assignee_ids=(5,))
+    assert (
+        render.check_off_prompt(todo) == "**t** is assigned to <@5>, not you. Check it off anyway?"
+    )
+
+
+def test_check_off_prompt_two_assignees() -> None:
+    todo = make_todo(title="t", assignee_ids=(5, 6))
+    assert render.check_off_prompt(todo) == (
+        "**t** is assigned to <@5> and <@6>, not you. Check it off anyway?"
+    )
+
+
+def test_check_off_prompt_three_assignees() -> None:
+    todo = make_todo(title="t", assignee_ids=(5, 6, 7))
+    assert render.check_off_prompt(todo) == (
+        "**t** is assigned to <@5>, <@6> and <@7>, not you. Check it off anyway?"
+    )
+
+
+def test_check_off_prompt_escapes_title() -> None:
+    title = "*x* @everyone"
+    todo = make_todo(title=title, assignee_ids=(5,))
+    assert render.check_off_prompt(todo) == (
+        f"**{render.esc(title)}** is assigned to <@5>, not you. Check it off anyway?"
+    )
+
+
+def test_undo_options_newest_first_with_index_values() -> None:
+    options = render.undo_options(["a", "b", "c"])
+    assert [option.label for option in options] == ["1. c", "2. b", "3. a"]
+    assert [option.value for option in options] == ["2", "1", "0"]
+
+
+def test_undo_options_capped_at_25_newest() -> None:
+    titles = [f"t{i}" for i in range(30)]
+    options = render.undo_options(titles)
+    assert len(options) == 25
+    assert options[0].label.startswith("1. ")
+    assert options[0].value == "29"
+
+
+def test_undo_options_long_title_is_cut_to_100() -> None:
+    (option,) = render.undo_options(["x" * 150])
+    assert len(option.label) == 100
+    assert option.label.endswith("…")

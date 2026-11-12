@@ -150,6 +150,6 @@ async def test_completing_an_already_done_occurrence_is_invalid(uow: Uow) -> Non
     occ_id = out.value.pending_occurrence_id
     assert occ_id is not None
     done = await occurrences.complete_occurrence(uow, actor, occ_id)
-    assert done.value.status == TodoStatus.DONE
+    assert done.value.todo.status == TodoStatus.DONE
     with pytest.raises(InvalidOperation):
         await occurrences.complete_occurrence(uow, actor, occ_id)

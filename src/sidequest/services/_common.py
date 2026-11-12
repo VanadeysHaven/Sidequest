@@ -18,7 +18,7 @@ from sidequest.core.tz import get_zone
 from sidequest.db.models import GuildSettings, Occurrence, Todo, TodoList, UserSettings
 from sidequest.services import permissions
 from sidequest.services.actor import Actor
-from sidequest.services.dto import OccurrenceView, SubtaskView, TodoView
+from sidequest.services.dto import OccurrenceView, SubtaskTick, SubtaskView, TodoView, UndoToken
 from sidequest.services.effects import DeleteMessage, Effect
 from sidequest.services.uow import Uow
 
@@ -344,22 +344,50 @@ def mark_todo_done(todo: Todo, actor: Actor, now: datetime) -> None:
 
 async def finish_occurrence(
     uow: Uow, actor: Actor, todo: Todo, occ: Occurrence, occurrences: Sequence[Occurrence]
-) -> tuple[list[Effect], bool]:
-    """Check off one open occurrence. Returns (effects, changed_schedule).
+) -> tuple[list[Effect], bool, UndoToken]:
+    """Check off one open occurrence. Returns (effects, changed_schedule, undo token).
 
     One-time: the to-do is done. Recurring: subtasks reset (D4) and, if the pending slot
-    is now free, the next occurrence after this one is materialized.
+    is now free, the next occurrence after this one is materialized. The token records
+    the state from before (D63, D66).
     """
     now = uow.clock.now()
-    was_pending = occ.status == OccurrenceStatus.PENDING
+    previous = occ.status
+    was_pending = previous == OccurrenceStatus.PENDING
     pending = find(occurrences, OccurrenceStatus.PENDING)
     effects = close(occ, OccurrenceStatus.DONE, now, actor.user_id)
     if todo.kind == TodoKind.ONCE:
         mark_todo_done(todo, actor, now)
-        return effects, was_pending
+        token = undo_token(todo, occ.id, previous)
+        return effects, was_pending, token
+    ticks = tuple(
+        SubtaskTick(id=s.id, done_at=s.done_at, done_by=s.done_by)
+        for s in todo.subtasks
+        if s.done_at is not None
+    )
     reset_subtasks(todo)
+    changed = False
     if pending is None or pending is occ:
         await uow.session.flush()  # free the one-pending-per-to-do slot first
-        add_next_pending(uow, todo, after=max(occ.due_at, now))
-        return effects, True
-    return effects, False
+        pending = add_next_pending(uow, todo, after=max(occ.due_at, now))
+        changed = True
+    await uow.session.flush()  # the follow-up's id
+    token = undo_token(todo, occ.id, previous, followup_id=pending.id, ticks=ticks)
+    return effects, changed, token
+
+
+def undo_token(
+    todo: Todo,
+    occurrence_id: int | None = None,
+    previous: OccurrenceStatus | None = None,
+    *,
+    followup_id: int | None = None,
+    ticks: tuple[SubtaskTick, ...] = (),
+) -> UndoToken:
+    return UndoToken(
+        todo_id=todo.id,
+        occurrence_id=occurrence_id,
+        previous=previous,
+        followup_id=followup_id,
+        ticks=ticks,
+    )

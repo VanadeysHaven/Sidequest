@@ -50,11 +50,11 @@ async def test_completing_recurring_todo_early_resets_subtasks_and_schedules_nex
 
     done = await todos.complete(uow, actor, tid)
     assert done.changed_schedule is True
-    assert done.value.status == TodoStatus.OPEN
-    assert done.value.next_due_at == utc(9, 8)
-    assert done.value.next_due_at > first_due
-    assert [s.done for s in done.value.subtasks] == [False, False]
-    assert {s.id for s in done.value.subtasks} == {first_id, second_id}
+    assert done.value.todo.status == TodoStatus.OPEN
+    assert done.value.todo.next_due_at == utc(9, 8)
+    assert done.value.todo.next_due_at > first_due
+    assert [s.done for s in done.value.todo.subtasks] == [False, False]
+    assert {s.id for s in done.value.todo.subtasks} == {first_id, second_id}
 
 
 async def test_subtask_list_is_capped_at_50(uow: Uow) -> None:
