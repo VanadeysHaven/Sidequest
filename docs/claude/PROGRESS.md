@@ -14,7 +14,7 @@
 | S6 | Reminders | ✅ done | `claude/s6-reminders` |
 | S7 | Ops & hardening | ✅ done | `claude/s7-ops` |
 | S8 | Server lists (no personal lists/DMs; collaborators) | ✅ done | `claude/s8-server-lists` |
-| S9 | Repeat every N weeks | ⏭️ next | `claude/s9-repeat-every-n-weeks` |
+| S9 | Repeat every N weeks | 👀 waiting for review | `claude/s9-repeat-every-n-weeks` |
 
 Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's review/commit · ✅ done
 
@@ -282,3 +282,15 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
 - No code changed and no branch created (the working tree had an uncommitted change in `bot/views/collaborators.py`, so switching branches wasn't allowed). The S9 session creates `claude/s9-repeat-every-n-weeks`.
 - Same day, Tim answered: `every` is an option on `/todo repeat weekly`; first reminder is the soonest possible; weeks start on Monday; `start` also works with `every:1` as "don't start before this date" (weekly only); range 1–52. The brief is updated and final (D54–D59).
 - Next: S9.
+- Done: Tim committed the brief and the collaborators tweak as `ffb8ffe` / `074199b`.
+
+### 2026-11-12 — S9 built (waiting for Tim's review)
+- Branch `claude/s9-repeat-every-n-weeks`. Checklist items 1–7 done; D54–D59 appended to BRIEF §3 (plus §4.3, §6, §8).
+- **Core:** `WeeklyRule.every` (1–52, strict int) and `.start` (date; JSON `YYYY-MM-DD` only, via a regex + `fromisoformat`, so `20261103` and datetimes are rejected). `WeeklyRule.is_anchored`; `to_json`, `next_occurrence` and `occurrences_between` raise `ValueError` on an unanchored rule. New `recurrence.anchored(rule, tz, now)`. Limits `WEEK_INTERVAL_MAX`, `START_AHEAD_MAX_DAYS`.
+- **Services:** `create_recurring` and `_retime_recurring` call `anchored` (the latter in the to-do's possibly new zone).
+- **Bot:** `every`/`start` on `/todo repeat weekly` (before `details`) and `/todo edit` (after `day`). Shared `Every` type and descriptions in `commands/common.py`. New `adapter.local_date`; `due_input` now uses it. `/todo repeat weekly` builds the rule up front (so typos fail before a modal) and adds the parsed `start` inside `create` with `model_copy`.
+- **Tests:** +34 in a new `tests/unit/test_recurrence_weeks.py` (deviation: the spec said `test_recurrence.py`, which is already 506 lines); +9 in `test_options.py`; +8 in `test_services_todos.py`; +1 in `test_scheduler.py`. Written by Haiku, reviewed.
+- **Checks:** `ruff check .` and `ruff format --check .` clean; `pytest` 622 passed against the test Postgres. `alembic check` not run (no model change).
+- **Docs:** RUNBOOK "Upgrading to S9" (no migration; rollback warning + SQL to find affected to-dos); root README features line.
+- Note: `tests/integration/test_scheduler.py` is CRLF in the working tree (index is LF); `.gitattributes` normalises it on commit.
+- **Manual test checklist (Tim, dev bot):** `segments/S9-repeat-every-n-weeks.md` §6.

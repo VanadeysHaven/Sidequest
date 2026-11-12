@@ -153,6 +153,18 @@ unique per list, D44). The log shows how many were deleted and renamed.
 - After the update, untick **User Install** in the Developer Portal (§2). The bot syncs its
   changed commands once on the first start.
 
+### Upgrading to S9 (every N weeks)
+
+No migration: a normal `./update.sh`. The bot syncs its changed commands once on the first
+start (`/todo repeat weekly` and `/todo edit` get `every` and `start`).
+
+- Weekly to-dos created before S9 keep exactly their stored rule and keep firing every week.
+- **Going back to a pre-S9 build breaks the scheduler once someone has used `every` or
+  `start`:** older code rejects the new keys in the stored rule. Before rolling back, finish
+  or delete every to-do whose `/todo show` says "Every N weeks …" or that was given a
+  `start`. To find them in the database:
+  `SELECT id, title FROM todos WHERE recurrence ? 'every' OR recurrence ? 'start';`
+
 `docker compose down` stops the bot gracefully: it finishes the reminder it is posting
 (at most 5 s), closes the Discord connection and the database pool, and logs `Stopped`.
 

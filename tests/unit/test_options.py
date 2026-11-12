@@ -147,3 +147,69 @@ def test_date_only_on_untimed_todo_stays_untimed() -> None:
     todo = make_todo(timezone="Europe/Amsterdam")
     patch = edit_patch(todo, due=DueInput(date=date(2030, 1, 10)))
     assert patch.due == DueInput(date=date(2030, 1, 10))
+
+
+# --- every N weeks (S9) ---
+
+
+def test_weekly_rule_every_and_start_default_to_one_and_none() -> None:
+    rule = weekly_rule("tue", "07:00")
+    assert rule.every == 1
+    assert rule.start is None
+
+
+def test_weekly_rule_takes_every_and_start() -> None:
+    rule = weekly_rule("tue", "07:00", every=2, start=date(2026, 11, 3))
+    assert rule.every == 2
+    assert rule.start == date(2026, 11, 3)
+
+
+def test_edited_rule_rejects_every_for_other_rule_type() -> None:
+    with pytest.raises(InvalidOperation) as info:
+        edited_rule(daily_rule("08:00"), every=2)
+    assert "`every`" in info.value.message
+
+
+def test_edited_rule_every_without_start_leaves_start_for_the_service() -> None:
+    rule = edited_rule(weekly_rule("mon", "12:00"), every=2)
+    assert isinstance(rule, WeeklyRule)
+    assert rule.every == 2
+    assert rule.start is None
+
+
+def test_edited_rule_keeps_stored_start_when_changing_every() -> None:
+    stored = weekly_rule("mon", "12:00", every=2, start=date(2026, 11, 16))
+    rule = edited_rule(stored, every=3)
+    assert isinstance(rule, WeeklyRule)
+    assert rule.every == 3
+    assert rule.start == date(2026, 11, 16)
+
+
+def test_edited_rule_every_one_keeps_stored_start() -> None:
+    stored = weekly_rule("mon", "12:00", every=2, start=date(2026, 11, 16))
+    rule = edited_rule(stored, every=1)
+    assert isinstance(rule, WeeklyRule)
+    assert rule.every == 1
+    assert rule.start == date(2026, 11, 16)
+
+
+def test_edited_rule_start_alone_on_every_one_rule() -> None:
+    stored = weekly_rule("mon", "12:00", start=date(2026, 11, 16))
+    rule = edited_rule(stored, start=date(2026, 12, 1))
+    assert isinstance(rule, WeeklyRule)
+    assert rule.start == date(2026, 12, 1)
+    assert rule.every == 1
+
+
+def test_edited_rule_start_alone_on_every_two_rule_keeps_every() -> None:
+    stored = weekly_rule("mon", "12:00", every=2, start=date(2026, 11, 16))
+    rule = edited_rule(stored, start=date(2026, 12, 1))
+    assert isinstance(rule, WeeklyRule)
+    assert rule.start == date(2026, 12, 1)
+    assert rule.every == 2
+
+
+def test_edit_patch_rejects_every_for_one_time_todo() -> None:
+    with pytest.raises(InvalidOperation) as info:
+        edit_patch(make_todo(), every=2)
+    assert "`every`" in info.value.message

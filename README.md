@@ -13,8 +13,9 @@ ping the assignees. Sidequest only works in servers (no DMs).
   collaborators (only they can change and check off its to-dos; everyone can see them).
   Everyone picks their own default list with `/settings default-list`.
 - **One-time to-dos**, with or without a date and time (`HH:MM`, 24-hour).
-- **Repeating to-dos:** daily, weekly (several days), monthly on a weekday ("first Sunday")
-  or on a day of the month ("the 15th", "last day"), each with one or more times.
+- **Repeating to-dos:** daily, weekly (several days, optionally every 2–52 weeks and from a
+  start date), monthly on a weekday ("first Sunday") or on a day of the month ("the 15th",
+  "last day"), each with one or more times.
 - **Subtasks** (up to 50 per to-do) and long multi-line **details**.
 - **Reminders** with a **Done** button and subtask checkboxes; whoever may work on the list
   can check it off. An unchecked reminder of a repeating to-do is replaced by the next one.

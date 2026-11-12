@@ -8,6 +8,12 @@ SUBTASKS_MAX = 50
 ASSIGNEES_MAX = 10
 TIMES_PER_RULE_MAX = 12
 
+# Weekly rules (S9).
+WEEK_INTERVAL_MAX = 52
+"""`every` on a weekly rule: 1–52 weeks."""
+START_AHEAD_MAX_DAYS = 366
+"""How far ahead a weekly rule's `start` may be, checked when it is set."""
+
 # Server lists (S8).
 LIST_NAME_MAX = 50
 LISTS_MAX = 25

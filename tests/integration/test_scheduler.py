@@ -8,8 +8,8 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from sidequest.core.enums import OccurrenceStatus
-from sidequest.core.recurrence import DailyRule
+from sidequest.core.enums import OccurrenceStatus, Weekday
+from sidequest.core.recurrence import DailyRule, WeeklyRule
 from sidequest.db.models import Occurrence
 from sidequest.scheduler.loop import Scheduler
 from sidequest.scheduler.notifier import Failed, Posted
@@ -368,3 +368,33 @@ async def test_stop_finishes_the_reminder_being_delivered(
     [occ] = await _occurrences(uows, todo_id)
     assert occ.status == OccurrenceStatus.SENT
     assert occ.message_id is not None  # recorded, so nothing is re-posted after a restart
+
+
+# --- every N weeks (S9) ---
+
+
+async def test_every_two_weeks_reminder_repeats_fourteen_days_later(
+    committed_sessions: async_sessionmaker[AsyncSession], clock: FixedClock, tmp_path: Path
+) -> None:
+    uows = UowFactory(committed_sessions, clock)
+    notifier = FakeNotifier()
+    scheduler = _scheduler(uows, notifier, clock, tmp_path)
+    await _set_channel(uows)
+    async with uows() as uow:
+        out = await todos.create_recurring(
+            uow,
+            member(OWNER, GUILD_A),
+            title="biweekly",
+            rule=WeeklyRule(weekdays=[Weekday.WED], times=["12:00"], every=2),
+        )
+    todo_id = out.value.id
+    # Now is Mon 2030-01-07 09:00 UTC, so the start is the next Wednesday, 2030-01-09.
+    first_due = utc(9, 12)
+
+    clock.set(first_due)
+    await scheduler.post_due()
+    [first, pending] = await _occurrences(uows, todo_id)
+    assert first.status == OccurrenceStatus.SENT
+    assert pending.status == OccurrenceStatus.PENDING
+    assert pending.due_at == first_due + timedelta(days=14)
+    assert len(_mine(notifier.posted, todo_id)) == 1

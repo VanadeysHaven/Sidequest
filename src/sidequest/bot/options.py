@@ -1,6 +1,7 @@
 """Slash command options → service arguments. Pure, so the mapping is unit-testable."""
 
 import enum
+from datetime import date
 from typing import Any
 
 from sidequest.core.enums import TodoKind, Weekday
@@ -37,7 +38,7 @@ class WeekdayOption(enum.Enum):
     Sunday = "sun"
 
 
-REPEAT_ONLY = ("times", "days", "week", "weekday", "day")
+REPEAT_ONLY = ("times", "days", "week", "weekday", "day", "every", "start")
 
 
 def edit_patch(
@@ -51,6 +52,8 @@ def edit_patch(
     week: WeekOption | None = None,
     weekday: WeekdayOption | None = None,
     day: str | None = None,
+    every: int | None = None,
+    start: date | None = None,
 ) -> TodoPatch:
     """`/todo edit` options → `TodoPatch`, checked against the to-do's kind and rule type.
 
@@ -61,7 +64,15 @@ def edit_patch(
         fields["title"] = title
     if timezone:
         fields["timezone"] = timezone
-    rule_parts = {"times": times, "days": days, "week": week, "weekday": weekday, "day": day}
+    rule_parts = {
+        "times": times,
+        "days": days,
+        "week": week,
+        "weekday": weekday,
+        "day": day,
+        "every": every,
+        "start": start,
+    }
     if todo.kind == TodoKind.RECURRING:
         if due is not None:
             raise InvalidOperation(
@@ -75,7 +86,8 @@ def edit_patch(
     else:
         if any(value is not None for value in rule_parts.values()):
             raise InvalidOperation(
-                "`times`, `days`, `week`, `weekday` and `day` are for repeating to-dos. "
+                "`times`, `days`, `week`, `weekday`, `day`, `every` and `start` are for "
+                "repeating to-dos. "
                 "Use `date` and `time` here."
             )
         if due is not None:
@@ -100,8 +112,11 @@ def daily_rule(times: str) -> DailyRule:
     return DailyRule(times=parse_times(times))
 
 
-def weekly_rule(days: str, times: str) -> WeeklyRule:
-    return WeeklyRule(weekdays=parse_weekdays(days), times=parse_times(times))
+def weekly_rule(days: str, times: str, every: int = 1, start: date | None = None) -> WeeklyRule:
+    """`every` ≥ 2 without `start` is anchored by the service (D56)."""
+    return WeeklyRule(
+        weekdays=parse_weekdays(days), times=parse_times(times), every=every, start=start
+    )
 
 
 def monthly_weekday_rule(week: WeekOption, weekday: WeekdayOption, times: str) -> MonthlyRule:
@@ -114,7 +129,7 @@ def monthly_day_rule(day: str, times: str) -> MonthlyDayRule:
 
 _RULE_FIELDS: dict[type, set[str]] = {
     DailyRule: {"times"},
-    WeeklyRule: {"times", "days"},
+    WeeklyRule: {"times", "days", "every", "start"},
     MonthlyRule: {"times", "week", "weekday"},
     MonthlyDayRule: {"times", "day"},
 }
@@ -134,10 +149,13 @@ def edited_rule(
     week: WeekOption | None = None,
     weekday: WeekdayOption | None = None,
     day: str | None = None,
+    every: int | None = None,
+    start: date | None = None,
 ) -> RecurrenceRule | None:
     """`rule` with the given parts replaced (None: nothing given). The rule type stays;
     an option that belongs to another rule type is an error (BRIEF: switching type means
-    delete + re-create)."""
+    delete + re-create). A weekly rule keeps its stored `start` unless one is given (D57);
+    going to `every` ≥ 2 without one leaves it for the service to anchor."""
     given = {
         name
         for name, value in {
@@ -146,6 +164,8 @@ def edited_rule(
             "week": week,
             "weekday": weekday,
             "day": day,
+            "every": every,
+            "start": start,
         }.items()
         if value is not None
     }
@@ -170,4 +190,8 @@ def edited_rule(
         changes["weekday"] = Weekday(weekday.value)
     if day is not None:
         changes["day"] = parse_month_day(day)
+    if every is not None:
+        changes["every"] = every
+    if start is not None:
+        changes["start"] = start
     return type(rule)(**{**rule.model_dump(), **changes})

@@ -95,6 +95,12 @@ To-dos can be one-time (untimed, or timed with a date + time) or repeating (dail
 | D51 | 2026-11-12 | **The fallback list is open to everyone.** Every member can add, edit, delete, assign, move and check off its to-dos and tick subtasks. Only **Manage Server** can **rename** it. It never has an owner or collaborators, can't be transferred, and **can't be deleted by anyone**, not even Manage Server. | Tim |
 | D52 | 2026-11-12 | **Transferring ownership:** `/lists transfer` by the owner or Manage Server; not for the fallback list. The new owner must be a server member and not a bot; if they were a collaborator they stop being one. The **old owner becomes a collaborator**; if that would exceed 25 collaborators, the transfer is refused ("remove a collaborator first"). | Tim |
 | D53 | 2026-11-12 | `/settings default-list` only accepts a list you can add to-dos to. If you later lose that right, `/todo add` without `list` says so and names the list, rather than silently picking another. | Tim |
+| D54 | 2026-11-12 | **Weekly rules get an interval:** `every` = 1–52 weeks, default 1 (the old behaviour). It's an option on `/todo repeat weekly`, not a separate command. Weekly rules only; "every N days" and "every N months" stay out of scope (§8). | Tim |
+| D55 | 2026-11-12 | **Weeks run Monday–Sunday.** A week is "on" when the number of weeks between its Monday and the Monday of the `start` week is a multiple of `every`. So with `days:sun,mon every:2` a Sunday and the following Monday are in different weeks and never fire as a pair. | Tim |
+| D56 | 2026-11-12 | **`start`** (optional date) on any weekly rule: nothing fires before it. With `every` ≥ 2 its week is the first on-week. Past dates are allowed (to line a schedule up with the real world); at most one year ahead. With `every` ≥ 2 and no `start`, it is set to the date of the next time the rule would fire as a plain weekly rule, so the first reminder is the soonest possible. With `every:1` and no `start`, none is stored. | Tim |
+| D57 | 2026-11-12 | **Editing:** `/todo edit` has `every` and `start` (weekly to-dos only). Changing `days`, `times`, `timezone` or `every` keeps the stored `start`. Going from `every:1` without a `start` to ≥ 2 anchors as on create, so the next reminder doesn't move. `start` can be replaced, not cleared; a past `start` on an `every:1` rule has no effect. | Claude |
+| D58 | 2026-11-12 | **Wording:** `every` ≥ 2 → "Every 2 weeks on Monday and Thursday at 12:00 (Europe/Amsterdam)"; `every:1` keeps "Every Monday and Thursday at 12:00 (…)". The start date isn't in the description; "Next:" already shows when it fires. | Claude |
+| D59 | 2026-11-12 | **Storage:** two optional keys in the weekly JSON: `every` only when ≥ 2, `start` (`YYYY-MM-DD`) only when set. A rule with `every:1` and no `start` keeps the old JSON byte-for-byte, so **no migration**. Rolling back to a pre-S9 build after `every`/`start` were used breaks the scheduler (old code rejects the keys); see RUNBOOK. | Claude |
 
 ---
 
@@ -124,6 +130,7 @@ All times are wall-clock times in the to-do's timezone; they stay at the same lo
 - **Weekly** on one or more weekdays at one or more times — "every Monday and Thursday at 12:00".
 - **Monthly (weekday)** on the n-th weekday of the month (1st–4th or last) at one or more times — "every first Sunday of the month at 12:00".
 - **Monthly (day)** on a day of the month (1–31 or last day) at one or more times — "on the 15th of every month at 09:00". A day a month doesn't have falls back to its last day (D21).
+- **Every N weeks / start date:** a weekly rule may repeat every 2–52 weeks, and `start` keeps it from firing before a date and picks the weeks (D54–D56) — "every 2 weeks on Tuesday at 07:00".
 
 DST: a nonexistent local time (spring-forward gap) shifts forward by the gap; an ambiguous time (fall-back) fires once, at the first instance.
 
@@ -267,6 +274,7 @@ Fully possible. With `Intents.none()` the bot still receives every slash command
 | S6 | Reminders | S4 (S5 for shared render helpers) | Scheduler, reminder messages, DMs |
 | S7 | Ops & hardening | S1–S6 | Health, backups, retention, runbook, final review |
 | S8 | Server lists | S1–S7 | Drop personal lists/DMs; named lists, collaborators, default list per user, migration `0003` |
+| S9 | Repeat every N weeks | S1–S8 | Weekly `every` (1–52) and `start`; no migration |
 
 ---
 
@@ -277,4 +285,4 @@ None. A1–A14 were reviewed by Tim on 2026-11-10 and are now decisions D17–D3
 ---
 
 ## 8. Out of scope (for now)
-Web frontend · snooze buttons · role assignees · "every N days/weeks" intervals · date-only to-dos · per-server default timezone · localisation · notification digests.
+Web frontend · snooze buttons · role assignees · "every N days / every N months" intervals · start dates for daily/monthly rules · date-only to-dos · per-server default timezone · localisation · notification digests.

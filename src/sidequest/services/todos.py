@@ -132,6 +132,7 @@ async def create_recurring(
     """Repeating to-do with its first pending occurrence."""
     lst = await _target_list(uow, actor, list_id)
     zone = await c.effective_zone(uow, actor, timezone)
+    rule = recurrence.anchored(rule, zone, uow.clock.now())
     todo = await _new_todo(
         uow, actor, lst, TodoKind.RECURRING, title, details, zone.key, assignee_ids
     )
@@ -260,7 +261,9 @@ async def _retime_recurring(uow: Uow, todo: Todo, patch: TodoPatch) -> None:
     if patch.timezone:
         todo.timezone = get_zone(patch.timezone).key
     if patch.rule is not None:
-        todo.recurrence = recurrence.to_json(patch.rule)
+        # Anchored in the (possibly new) zone; a kept `start` stays as it is (D57).
+        rule = recurrence.anchored(patch.rule, get_zone(todo.timezone), uow.clock.now())
+        todo.recurrence = recurrence.to_json(rule)
     # The sent reminder (if any) stays: it is the current occurrence and can still be done.
     await c.cancel_open(uow, todo, include_sent=False)
     c.add_next_pending(uow, todo, after=uow.clock.now())

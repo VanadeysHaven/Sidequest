@@ -8,6 +8,7 @@ from discord import app_commands
 
 from sidequest.bot import adapter, render
 from sidequest.bot.views.modals import CreateWithDetailsModal
+from sidequest.core.limits import WEEK_INTERVAL_MAX
 from sidequest.core.timeparse import parse_date, parse_time
 from sidequest.core.tz import get_zone
 from sidequest.services.actor import Actor
@@ -32,6 +33,11 @@ CREATE_DESCRIPTIONS: dict[str, str] = {
 
 # Plain assignment, not `type`: discord.py must see the Range itself in annotations.
 Title = app_commands.Range[str, 1, 200]
+Every = app_commands.Range[int, 1, WEEK_INTERVAL_MAX]
+
+# Weekly-rule options shared by `/todo repeat weekly` and `/todo edit` (S9).
+EVERY_DESCRIPTION = "Repeat every N weeks (default 1)"
+START_DESCRIPTION = "Don't start before this date; with every ≥ 2 it also picks the weeks"
 type Create = Callable[[Uow, Actor, str, str | None], Awaitable[Outcome[TodoView]]]
 
 

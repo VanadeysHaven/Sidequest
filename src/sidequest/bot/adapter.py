@@ -140,11 +140,14 @@ async def due_input(
     """Parse the `date`/`time` options. `today`/`tomorrow` are relative to the zone the
     to-do will use."""
     parsed_time = parse_time(time_text) if time_text else None
-    parsed_date: date | None = None
-    if date_text:
-        zone = get_zone(await zone_name(uow, actor, tz))
-        parsed_date = parse_date(date_text, uow.clock.now().astimezone(zone).date())
+    parsed_date = await local_date(uow, actor, date_text, tz) if date_text else None
     return DueInput(date=parsed_date, time=parsed_time)
+
+
+async def local_date(uow: Uow, actor: Actor, text: str, tz: str | None) -> date:
+    """Parse a date option. `today`/`tomorrow` are relative to the zone the to-do will use."""
+    zone = get_zone(await zone_name(uow, actor, tz))
+    return parse_date(text, uow.clock.now().astimezone(zone).date())
 
 
 # --- after a service call ----------------------------------------------------------------

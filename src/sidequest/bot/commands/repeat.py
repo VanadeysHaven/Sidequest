@@ -7,7 +7,7 @@ from discord import app_commands
 
 from sidequest.bot import adapter, autocomplete, options
 from sidequest.bot.commands import common
-from sidequest.bot.commands.common import CREATE_DESCRIPTIONS, Title
+from sidequest.bot.commands.common import CREATE_DESCRIPTIONS, Every, Title
 from sidequest.bot.options import WeekdayOption, WeekOption
 from sidequest.services import todos
 from sidequest.services.actor import Actor
@@ -71,6 +71,8 @@ def weekly_command() -> app_commands.Command:  # type: ignore[type-arg]
     @app_commands.describe(
         days="e.g. mon,thu or weekdays / weekend",
         times="24-hour times, comma-separated, e.g. 08:00, 20:00",
+        every=common.EVERY_DESCRIPTION,
+        start=common.START_DESCRIPTION,
     )
     @app_commands.rename(list_="list")
     @app_commands.autocomplete(timezone=autocomplete.timezone, list_=autocomplete.todo_list)
@@ -84,18 +86,21 @@ def weekly_command() -> app_commands.Command:  # type: ignore[type-arg]
         assignee2: discord.User | None = None,
         assignee3: discord.User | None = None,
         list_: str | None = None,
+        every: Every = 1,
+        start: str | None = None,
         details: bool = False,
     ) -> None:
-        common.check_options(list_value=list_, timezone=timezone)
-        rule = options.weekly_rule(days, times)
+        common.check_options(list_value=list_, date_text=start, timezone=timezone)
+        rule = options.weekly_rule(days, times, every)
 
         async def create(uow: Uow, actor: Actor, title: str, text: str | None) -> Outcome[TodoView]:
+            start_date = await adapter.local_date(uow, actor, start, timezone) if start else None
             return await todos.create_recurring(
                 uow,
                 actor,
                 list_id=adapter.parse_list_id(list_),
                 title=title,
-                rule=rule,
+                rule=rule.model_copy(update={"start": start_date}),
                 details=text,
                 timezone=timezone,
                 assignee_ids=adapter.user_ids([assignee, assignee2, assignee3]),
