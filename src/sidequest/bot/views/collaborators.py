@@ -37,8 +37,6 @@ class CollaboratorsView(BaseView):
                 uow, adapter.actor_from(interaction), self.list_id, ids
             )
         content = render.collaborators_text(lst)
-        if dropped:
-            content += f"\n(Left out: {'; '.join(dropped)}.)"
         await interaction.edit_original_response(
             content=content, view=None, allowed_mentions=adapter.NO_MENTIONS
         )
