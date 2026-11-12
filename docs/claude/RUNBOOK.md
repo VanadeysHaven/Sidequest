@@ -303,7 +303,7 @@ A **major** upgrade (e.g. 17 → 18) can't reuse the data directory. Dump, start
    `docker compose ps`.
 6. Restore: `scripts/restore-backup.sh backups/pre-upgrade.sql.gz` (it also starts the bot).
 7. Check `docker compose ps` and try `/todo list`. Commit the `compose.yaml` change, and
-   update D10 in `docs/claude/BRIEF.md`.
+   update D10 in `CLAUDE.md` §6.
 
 ---
 

@@ -66,4 +66,5 @@ docker compose -f compose.test.yaml up -d
 TEST_DATABASE_URL=postgresql+asyncpg://sidequest:sidequest@localhost:55432/sidequest_test pytest
 ```
 
-Design notes and decisions: [`docs/claude/BRIEF.md`](docs/claude/BRIEF.md).
+Design notes and decisions: [`CLAUDE.md`](CLAUDE.md) (current) and
+[`docs/claude/archive/initial-release/`](docs/claude/archive/initial-release/) (the original brief and segment docs).
