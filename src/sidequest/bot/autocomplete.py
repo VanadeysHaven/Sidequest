@@ -10,7 +10,7 @@ from sidequest.bot.adapter import actor_from, uows
 from sidequest.core.errors import SidequestError
 from sidequest.core.limits import SELECT_LABEL_MAX
 from sidequest.core.tz import search_zones
-from sidequest.services import todos
+from sidequest.services import lists, todos
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ async def timezone(interaction: discord.Interaction, current: str) -> Choices:
 
 
 async def todo(interaction: discord.Interaction, current: str) -> Choices:
-    """Open to-dos from both lists; value = id."""
+    """Open to-dos from every list of the server; value = id. Label `[List] title`."""
     try:
         actor = actor_from(interaction)
         async with uows(interaction)() as uow:
@@ -31,8 +31,23 @@ async def todo(interaction: discord.Interaction, current: str) -> Choices:
         log.exception("To-do autocomplete failed")
         return []
     return [
-        app_commands.Choice(name=render.autocomplete_label(title, scope), value=str(todo_id))
-        for todo_id, title, scope in found
+        app_commands.Choice(name=render.autocomplete_label(title, list_name), value=str(todo_id))
+        for todo_id, title, list_name in found
+    ]
+
+
+async def todo_list(interaction: discord.Interaction, current: str) -> Choices:
+    """The server's lists, prefix matches first; value = list id."""
+    try:
+        actor = actor_from(interaction)
+        async with uows(interaction)() as uow:
+            found = await lists.autocomplete(uow, actor, current)
+    except Exception:
+        log.exception("List autocomplete failed")
+        return []
+    return [
+        app_commands.Choice(name=render.cut(name, SELECT_LABEL_MAX), value=str(list_id))
+        for list_id, name in found
     ]
 
 

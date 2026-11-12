@@ -8,9 +8,9 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from sidequest.core.enums import OccurrenceStatus, Scope
+from sidequest.core.enums import OccurrenceStatus
 from sidequest.core.recurrence import DailyRule
-from sidequest.db.models import Occurrence, UserSettings
+from sidequest.db.models import Occurrence
 from sidequest.scheduler.loop import Scheduler
 from sidequest.scheduler.notifier import Failed, Posted
 from sidequest.scheduler.signal import ScheduleSignal
@@ -59,13 +59,12 @@ async def _set_channel(uows: UowFactory) -> None:
         await settings.set_reminder_channel(uow, member(MANAGER, GUILD_A, True), CHANNEL)
 
 
-async def _create_once(
-    uows: UowFactory, *, title: str, due: time, scope: Scope = Scope.SERVER
-) -> tuple[int, int]:
+async def _create_once(uows: UowFactory, *, title: str, due: time) -> tuple[int, int]:
     """Returns (todo id, pending occurrence id)."""
-    actor = member(OWNER, GUILD_A if scope == Scope.SERVER else None)
     async with uows() as uow:
-        out = await todos.create_once(uow, actor, scope=scope, title=title, due=DueInput(time=due))
+        out = await todos.create_once(
+            uow, member(OWNER, GUILD_A), title=title, due=DueInput(time=due)
+        )
     assert out.value.pending_occurrence_id is not None
     return out.value.id, out.value.pending_occurrence_id
 
@@ -75,7 +74,6 @@ async def _create_daily(uows: UowFactory, *, title: str) -> int:
         out = await todos.create_recurring(
             uow,
             member(OWNER, GUILD_A),
-            scope=Scope.SERVER,
             title=title,
             rule=DailyRule(times=["08:00"]),
         )
@@ -208,27 +206,6 @@ async def test_missing_reminder_channel_marks_occurrence_failed(
     [occ] = await _occurrences(uows, todo_id)
     assert occ.status == OccurrenceStatus.FAILED
     assert occ.failure_reason == "no_channel"
-
-
-async def test_closed_dms_mark_failed_and_flag_the_owner(
-    committed_sessions: async_sessionmaker[AsyncSession], clock: FixedClock, tmp_path: Path
-) -> None:
-    uows = UowFactory(committed_sessions, clock)
-    notifier = FakeNotifier()
-    notifier.respond = lambda _reminder: Failed(reason="dm_closed")
-    scheduler = _scheduler(uows, notifier, clock, tmp_path)
-    todo_id, _ = await _create_once(uows, title="dm me", due=time(10, 0), scope=Scope.PERSONAL)
-
-    clock.set(utc(7, 10))
-    await scheduler.post_due()
-
-    [occ] = await _occurrences(uows, todo_id)
-    assert occ.status == OccurrenceStatus.FAILED
-    assert occ.failure_reason == "dm_closed"
-    async with uows() as uow:
-        user = await uow.session.get(UserSettings, OWNER)
-    assert user is not None
-    assert user.dm_failed_at == clock.now()
 
 
 async def test_crash_recovery_reposts_claimed_but_unposted_reminder(

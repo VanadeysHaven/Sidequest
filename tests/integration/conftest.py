@@ -114,6 +114,9 @@ async def committed_sessions(
     finally:
         async with engine.begin() as conn:
             await conn.execute(
-                text("TRUNCATE todos, user_settings, guild_settings RESTART IDENTITY CASCADE")
+                text(
+                    "TRUNCATE todos, todo_lists, user_settings, guild_settings "
+                    "RESTART IDENTITY CASCADE"
+                )
             )
         await engine.dispose()

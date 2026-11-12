@@ -1,18 +1,18 @@
-"""User and server settings: timezone, one-time hints, reminder channel."""
+"""User and server settings: timezone, one-time hints, default list, reminder channel."""
 
-from datetime import datetime
-
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
-from sidequest.core.enums import OccurrenceStatus, Scope, TodoStatus
+from sidequest.core.enums import OccurrenceStatus, TodoStatus
 from sidequest.core.errors import Forbidden, InvalidOperation
+from sidequest.core.text import bold
 from sidequest.core.tz import get_zone
-from sidequest.db.models import GuildSettings, Occurrence, Todo, UserSettings
-from sidequest.services import permissions
+from sidequest.db.models import GuildSettings, Occurrence, Todo, UserGuildSettings, UserSettings
+from sidequest.services import _common as c
+from sidequest.services import lists, permissions
 from sidequest.services._common import user_timezone
 from sidequest.services.actor import Actor
-from sidequest.services.dto import GuildSettingsView
+from sidequest.services.dto import GuildSettingsView, ListView
 from sidequest.services.uow import Uow
 
 
@@ -46,20 +46,52 @@ async def consume_tz_hint(uow: Uow, user_id: int) -> bool:
     return shown
 
 
-async def consume_dm_failure(uow: Uow, user_id: int) -> datetime | None:
-    """When a DM reminder to this user last failed, then clear it (D26). None if not."""
-    row = await uow.session.scalar(
-        select(UserSettings)
-        .where(UserSettings.user_id == user_id, UserSettings.dm_failed_at.is_not(None))
-        .with_for_update()
-        .execution_options(populate_existing=True)
+# --- default list (D45, D53) -------------------------------------------------------------
+
+
+async def own_default_list_id(uow: Uow, actor: Actor) -> int | None:
+    """The actor's own default-list setting in this server, without the fallback (used by
+    `/todo upcoming`, D49). None if unset or if that list was deleted."""
+    return await lists.own_default_list_id(uow, actor)
+
+
+async def get_default_list(uow: Uow, actor: Actor) -> ListView:
+    """The actor's effective default list here: their setting, else the server's fallback.
+    `ListView.is_fallback` tells which."""
+    return await lists.get(uow, actor, None)
+
+
+async def set_default_list(uow: Uow, actor: Actor, list_id: int) -> ListView:
+    """Only a list the actor can add to-dos to (D53)."""
+    guild_id = c.require_guild(actor)
+    lst = await lists.resolve(uow, actor, list_id)
+    if not permissions.can_add(actor, lst):
+        raise Forbidden(
+            f"You can only pick a list you can add to-dos to; {bold(lst.name)} is limited "
+            "to its owner and collaborators."
+        )
+    stmt = insert(UserGuildSettings).values(
+        user_id=actor.user_id, guild_id=guild_id, default_list_id=lst.id
     )
-    if row is None:
-        return None
-    failed_at = row.dm_failed_at
-    row.dm_failed_at = None
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[UserGuildSettings.user_id, UserGuildSettings.guild_id],
+        set_={"default_list_id": lst.id, "updated_at": func.now()},
+    )
+    await uow.session.execute(stmt)
+    view = await lists.view_of(uow, actor, lst)
     await uow.session.commit()
-    return failed_at
+    return view
+
+
+async def clear_default_list(uow: Uow, actor: Actor) -> ListView:
+    """Back to the server's fallback list; returns it."""
+    guild_id = c.require_guild(actor)
+    await uow.session.execute(
+        delete(UserGuildSettings).where(
+            UserGuildSettings.user_id == actor.user_id, UserGuildSettings.guild_id == guild_id
+        )
+    )
+    return await lists.get(uow, actor, None)
 
 
 NO_REMINDER_CHANNEL = "This server has no reminder channel set."
@@ -110,13 +142,12 @@ async def clear_reminder_channel(uow: Uow, actor: Actor) -> None:
 
 
 async def count_scheduled_server_todos(uow: Uow, guild_id: int) -> int:
-    """Open server to-dos that still have a reminder coming (a pending occurrence): the
-    ones that stop reminding when the reminder channel is unset."""
+    """Open to-dos of the server that still have a reminder coming (a pending occurrence):
+    the ones that stop reminding when the reminder channel is unset."""
     count = await uow.session.scalar(
         select(func.count(func.distinct(Todo.id)))
         .join(Occurrence, Occurrence.todo_id == Todo.id)
         .where(
-            Todo.scope == Scope.SERVER,
             Todo.guild_id == guild_id,
             Todo.status == TodoStatus.OPEN,
             Occurrence.status == OccurrenceStatus.PENDING,

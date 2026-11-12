@@ -7,9 +7,6 @@ from sidequest.scheduler.notifier import Failed, Posted, PostResult
 from sidequest.services.dto import DueReminder
 from sidequest.services.effects import Effect
 
-DM_CHANNEL_BASE = 900_000
-"""Fake DM channel id = DM_CHANNEL_BASE + user id."""
-
 
 class FakeNotifier:
     """Posts succeed by default with increasing message ids (1, 2, …).
@@ -17,7 +14,7 @@ class FakeNotifier:
     - `calls`: ("execute", effect) / ("post", occurrence_id) in call order, to check that a
       replaced reminder is deleted before the new one is posted.
     - `posted`: every reminder passed to `post`.
-    - `respond`: optional hook returning a custom result (e.g. `Failed("dm_closed")`) or
+    - `respond`: optional hook returning a custom result (e.g. `Failed("forbidden")`) or
       raising, per reminder; return None for the default success.
     - `wait_for_posts(n)`: await until at least n posts happened (for loop tests).
     """
@@ -39,12 +36,11 @@ class FakeNotifier:
             result = self.respond(reminder)
             if result is not None:
                 return result
-        if reminder.channel_id is None and reminder.dm_user_id is None:
+        if reminder.channel_id is None:
             return Failed(reason="no_channel")
-        channel_id = reminder.channel_id or DM_CHANNEL_BASE + (reminder.dm_user_id or 0)
         message_id = self._next_message_id
         self._next_message_id += 1
-        return Posted(channel_id=channel_id, message_id=message_id)
+        return Posted(channel_id=reminder.channel_id, message_id=message_id)
 
     async def execute(self, effects: Sequence[Effect]) -> None:
         for effect in effects:

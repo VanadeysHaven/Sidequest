@@ -7,7 +7,6 @@ import discord
 from discord import app_commands
 
 from sidequest.bot import adapter, render
-from sidequest.bot.adapter import ScopeOption
 from sidequest.bot.views.modals import CreateWithDetailsModal
 from sidequest.core.timeparse import parse_date, parse_time
 from sidequest.core.tz import get_zone
@@ -16,20 +15,18 @@ from sidequest.services.dto import TodoView
 from sidequest.services.effects import Outcome
 from sidequest.services.uow import Uow
 
-# /todo and /settings: guild + user installs; servers, DMs with the bot, group DMs.
-ANYWHERE_INSTALLS = app_commands.AppInstallationType(guild=True, user=True)
-ANYWHERE_CONTEXTS = app_commands.AppCommandContext(
-    guild=True, dm_channel=True, private_channel=True
-)
+# Every command: guild installs, used in servers only (D40; no DMs, no user installs).
+GUILD_INSTALLS = app_commands.AppInstallationType(guild=True, user=False)
+GUILD_CONTEXTS = app_commands.AppCommandContext(guild=True, dm_channel=False, private_channel=False)
 
 # Descriptions of the options every create command shares (stack with its own `describe`).
 CREATE_DESCRIPTIONS: dict[str, str] = {
     "title": "What needs doing (max 200 characters)",
     "timezone": "Timezone for this to-do (default: yours)",
-    "assignee": "Who should do it (server list only; default: you)",
+    "assignee": "Who should do it (default: you)",
     "assignee2": "Another assignee",
     "assignee3": "Another assignee",
-    "scope": "Server list or your personal list (default: server list in a server)",
+    "list_": "Which list (default: your default list, see /settings default-list)",
     "details": "Open a form for longer, multi-line details",
 }
 
@@ -40,16 +37,14 @@ type Create = Callable[[Uow, Actor, str, str | None], Awaitable[Outcome[TodoView
 
 def check_options(
     *,
-    scope: ScopeOption | None = None,
-    interaction: discord.Interaction | None = None,
+    list_value: str | None = None,
     date_text: str | None = None,
     time_text: str | None = None,
     timezone: str | None = None,
 ) -> None:
     """Validate what can be checked without the database, before a modal opens, so the
     user doesn't type details only to hit a typo afterwards."""
-    if interaction is not None:
-        adapter.resolve_scope(adapter.actor_from(interaction), scope)
+    adapter.parse_list_id(list_value)
     if time_text:
         parse_time(time_text)
     if date_text:

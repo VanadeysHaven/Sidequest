@@ -4,14 +4,12 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import selectinload
 
-from sidequest.core.enums import OccurrenceStatus, Scope, TodoKind, TodoStatus
+from sidequest.core.enums import OccurrenceStatus, TodoKind, TodoStatus
 from sidequest.core.errors import InvalidOperation, NotFound
-from sidequest.db.models import GuildSettings, Occurrence, Todo, UserSettings
+from sidequest.db.models import GuildSettings, Occurrence, Todo
 from sidequest.services import _common as c
-from sidequest.services import subtasks
+from sidequest.services import lists, subtasks
 from sidequest.services.actor import Actor
 from sidequest.services.dto import DueReminder, TodoView, UpcomingItem
 from sidequest.services.effects import DeleteMessage, Effect, Outcome
@@ -20,8 +18,7 @@ from sidequest.services.uow import Uow
 LATE_AFTER = timedelta(minutes=2)
 """A reminder posted more than this after its due time is marked late."""
 
-# `mark_failed` reasons. `dm_closed` also warns the user on their next command (D26).
-FAILURE_DM_CLOSED = "dm_closed"
+# `mark_failed` reasons.
 FAILURE_NO_CHANNEL = "no_channel"
 """The server never set a reminder channel."""
 FAILURE_FORBIDDEN = "forbidden"
@@ -40,26 +37,27 @@ _SYSTEM = Actor.system()
 
 
 async def list_upcoming(
-    uow: Uow, actor: Actor, scope: Scope | None, until: datetime, limit: int = 25
+    uow: Uow, actor: Actor, list_id: int, until: datetime, limit: int = 25
 ) -> list[UpcomingItem]:
-    """Pending occurrences due before `until`, soonest first (scope None: both lists)."""
+    """Pending occurrences of one list due before `until`, soonest first (D49)."""
+    lst = await lists.resolve(uow, actor, list_id)
     rows = (
         await uow.session.execute(
             select(Occurrence, Todo)
             .join(Todo, Todo.id == Occurrence.todo_id)
             .where(
-                c.visible(actor, scope),
+                Todo.list_id == lst.id,
                 Todo.status == TodoStatus.OPEN,
                 Occurrence.status == OccurrenceStatus.PENDING,
                 Occurrence.due_at <= until,
             )
-            .options(selectinload(Todo.assignees), selectinload(Todo.subtasks))
+            .options(*c.todo_load())
             .order_by(Occurrence.due_at, Occurrence.id)
             .limit(limit)
         )
     ).all()
     occs = await c.open_occurrences(uow, [todo.id for _, todo in rows])
-    return [
+    items = [
         UpcomingItem(
             occurrence_id=occ.id,
             due_at=occ.due_at,
@@ -67,6 +65,8 @@ async def list_upcoming(
         )
         for occ, todo in rows
     ]
+    await uow.session.commit()  # resolve may have created the server's fallback list
+    return items
 
 
 async def _lock_occurrence(
@@ -94,10 +94,12 @@ async def complete_occurrence(uow: Uow, actor: Actor, occurrence_id: int) -> Out
 
     pending → done (the reminder is never sent); sent → done + delete its message.
     One-time: the to-do is done. Repeating: subtasks reset, next occurrence scheduled.
+    Only the list's owner and collaborators (any member on the fallback list, D50/D51).
     """
     todo, occ, open_occs = await _lock_occurrence(uow, actor, occurrence_id)
     if occ.status not in c.OPEN_OCCURRENCE or todo.status != TodoStatus.OPEN:
         raise InvalidOperation("That one is already checked off.")
+    c.require_complete(actor, todo)
     effects, changed = await c.finish_occurrence(uow, actor, todo, occ, open_occs)
     view = await c.view_of(uow, actor, todo)
     await uow.session.commit()
@@ -203,20 +205,13 @@ async def attach_message(
 
 
 async def mark_failed(uow: Uow, occurrence_id: int, reason: str) -> None:
-    """The reminder could not be posted. `dm_closed` also flags the owner (D26)."""
-    todo, occ, _ = await _lock_occurrence(uow, _SYSTEM, occurrence_id)
+    """The reminder could not be posted."""
+    _, occ, _ = await _lock_occurrence(uow, _SYSTEM, occurrence_id)
     if occ.status != OccurrenceStatus.SENT:
         await uow.session.commit()
         return
     occ.status = OccurrenceStatus.FAILED
     occ.failure_reason = reason[:64]
-    if reason == FAILURE_DM_CLOSED:
-        now = uow.clock.now()
-        stmt = insert(UserSettings).values(user_id=todo.owner_id, dm_failed_at=now)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=[UserSettings.user_id], set_={"dm_failed_at": now}
-        )
-        await uow.session.execute(stmt)
     await uow.session.commit()
 
 
@@ -258,7 +253,7 @@ async def _load_todos(uow: Uow, ids: Sequence[int] | set[int]) -> dict[int, Todo
     todos = await uow.session.scalars(
         select(Todo)
         .where(Todo.id.in_(list(ids)))
-        .options(selectinload(Todo.assignees), selectinload(Todo.subtasks))
+        .options(*c.todo_load())
         .execution_options(populate_existing=True)
     )
     return {t.id: t for t in todos}
@@ -267,7 +262,7 @@ async def _load_todos(uow: Uow, ids: Sequence[int] | set[int]) -> dict[int, Todo
 async def _reminders(
     uow: Uow, items: Sequence[tuple[Occurrence, Todo, list[Effect]]]
 ) -> list[DueReminder]:
-    guild_ids = {todo.guild_id for _, todo, _ in items if todo.guild_id is not None}
+    guild_ids = {todo.guild_id for _, todo, _ in items}
     channels: dict[int, int | None] = {}
     if guild_ids:
         result = await uow.session.execute(
@@ -279,13 +274,11 @@ async def _reminders(
     open_occs = await c.open_occurrences(uow, {todo.id for _, todo, _ in items})
     reminders: list[DueReminder] = []
     for occ, todo, effects in items:
-        server = todo.scope == Scope.SERVER
         reminders.append(
             DueReminder(
                 occurrence=c.occurrence_view(occ),
                 todo=c.todo_view(_SYSTEM, todo, open_occs[todo.id]),
-                channel_id=channels.get(todo.guild_id) if server and todo.guild_id else None,
-                dm_user_id=None if server else todo.owner_id,
+                channel_id=channels.get(todo.guild_id),
                 effects=effects,
             )
         )

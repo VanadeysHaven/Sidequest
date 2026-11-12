@@ -74,18 +74,17 @@ Use a separate application for production and for development (§11).
 2. **Bot** tab: **Reset Token** and copy it into `DISCORD_TOKEN` (shown once). Leave all
    three **Privileged Gateway Intents** off; the bot connects with no intents at all (D11).
 3. **Installation** tab:
-   - Installation contexts: tick **Guild Install** and **User Install**.
+   - Installation contexts: tick **Guild Install** only. **Untick User Install**: since S8
+     Sidequest only works in servers (D40), and its commands don't offer user installs.
    - Guild Install scopes: `applications.commands`, `bot`.
      Permissions: **View Channels**, **Send Messages**, **Embed Links**.
-   - User Install scopes: `applications.commands`.
    - Install link: **Discord Provided Link**. Open it to add the bot to a server.
 4. In each server, the reminder channel must allow the bot to view it, send messages and
    embed links. `/sidequest channel` checks this by posting a short message there.
 
 Notes:
-- Personal reminders arrive as DMs. Discord only lets a bot DM someone who shares a server
-  with it and allows DMs from server members. A refused DM is recorded and the user is told
-  on their next command (D26).
+- Sidequest has no DMs (D40): commands only exist in servers, and reminders only go to the
+  server's reminder channel.
 - Commands are registered on startup (D32). Global command changes can take up to an hour
   to show in every client; restarting Discord (Ctrl+R) usually speeds it up.
 
@@ -138,6 +137,22 @@ What it does:
 The bot applies database migrations on start (`RUN_MIGRATIONS=true`), then logs in and
 syncs commands. Run `docker compose ps` a few minutes later: the bot should be **healthy**.
 
+### Upgrading to S8 (migration `0003`, server lists)
+
+Migration `0003` **deletes every personal to-do** (with its subtasks and reminders) and puts
+every server to-do on a new **Default List** per server. Open to-dos on one server whose
+titles differ only in case get renamed `title (2)`, `title (3)`, … (open titles must be
+unique per list, D44). The log shows how many were deleted and renamed.
+
+- `./update.sh` takes a backup before the migration runs (step 3 above). Don't use
+  `--skip-db` for this update.
+- Personal reminder messages already sitting in users' DMs stay there. Pressing their Done
+  button removes the message and says the to-do no longer exists.
+- Going back: restore the backup from just before the update (§7). `alembic downgrade 0002`
+  restores the schema but can't bring personal to-dos back.
+- After the update, untick **User Install** in the Developer Portal (§2). The bot syncs its
+  changed commands once on the first start.
+
 `docker compose down` stops the bot gracefully: it finishes the reminder it is posting
 (at most 5 s), closes the Discord connection and the database pool, and logs `Stopped`.
 
@@ -184,9 +199,9 @@ Raise the detail level with `LOG_LEVEL=DEBUG` in `configs/.env`, then
 `docker compose up -d --force-recreate bot`. Set it back afterwards; DEBUG is chatty.
 
 Things worth knowing in the log:
-- `Reminder N could not be posted: forbidden / channel_gone / no_channel / dm_closed` — a
-  reminder failed; the reason says why (missing permission, deleted channel, no reminder
-  channel set, DMs closed).
+- `Reminder N could not be posted: forbidden / channel_gone / no_channel` — a reminder
+  failed; the reason says why (missing permission, deleted channel, no reminder channel
+  set). Older log lines may still show `dm_closed` from before S8.
 - `Scheduler iteration failed` — usually the database; the loop retries every 60 s.
 
 ---
@@ -285,7 +300,7 @@ A **major** upgrade (e.g. 17 → 18) can't reuse the data directory. Dump, start
 A second Discord application for testing, so command changes don't reach real servers.
 
 - In its `configs/.env`: `SYNC_GLOBAL=false` and `SYNC_GUILD_IDS=<test server id>`. Commands
-  then appear in that server instantly, and the dev bot has **no** commands in DMs (D32).
+  then appear in that server instantly (D32).
 - It needs its own database (another checkout with its own compose project, or run it
   locally against a local Postgres). Never point two bots at one database: both schedulers
   would post the same reminders.

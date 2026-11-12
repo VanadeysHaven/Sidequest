@@ -9,10 +9,13 @@
 ## 1. What Sidequest is
 
 A Discord bot for to-dos, written in Python, running in Docker on a Raspberry Pi.
-It has two kinds of lists:
+It only works in servers where it is installed (no DMs, D40).
 
-- **Server list** — one shared list per Discord server. To-dos can have assignees; reminders are posted in the server's reminder channel, pinging the assignees.
-- **Personal list** — one per user, the same in every server and in DMs with the bot. Reminders arrive as a DM.
+- A server has **named lists** (D41). Every server has a **Default List** that is open to every member (D42, D51); anyone can create more lists, which they own and share with **collaborators** (D46, D50).
+- Each user picks their own **default list** per server with `/settings default-list` (D45).
+- To-dos can have assignees; reminders are posted in the server's reminder channel, pinging the assignees.
+
+*(Until S8 there was one server list plus a personal list per user with DM reminders; see D2/D5, superseded by D40.)*
 
 To-dos can be one-time (untimed, or timed with a date + time) or repeating (daily / weekly / monthly), can have a checklist of subtasks and optional long multi-line details. A web frontend will come later; it is **out of scope now**, but the design must leave room for it (§5.6).
 
@@ -40,10 +43,10 @@ To-dos can be one-time (untimed, or timed with a date + time) or repeating (dail
 | ID | Date | Decision | Source |
 |---|---|---|---|
 | D1 | 2026-11-10 | Times are entered as 24h `HH:MM`. Points in time are shown as Discord timestamps, which Discord renders as 12h or 24h depending on each **viewer's** Discord language setting; that is accepted. Text that is *not* a point in time (e.g. "every Monday at 12:00") is written in 24h. | Tim |
-| D2 | 2026-11-10 | One shared list per server **plus** one personal list per user. | Tim |
-| D3 | 2026-11-10 | Anyone who can see a server reminder can check it off. Checking off completes it for everyone. | Tim |
+| D2 | 2026-11-10 | ~~One shared list per server **plus** one personal list per user.~~ Superseded by D40/D41. | Tim |
+| D3 | 2026-11-10 | ~~Anyone who can see a server reminder can check it off.~~ Superseded by D50/D51. Checking off still completes it for everyone. | Tim |
 | D4 | 2026-11-10 | Subtasks are simple checklist items (no own time/assignee). On repeating to-dos they reset for each new occurrence. | Tim |
-| D5 | 2026-11-10 | The personal list is global (all servers + DMs with the bot). Personal reminders are sent as DMs. | Tim |
+| D5 | 2026-11-10 | ~~The personal list is global (all servers + DMs with the bot). Personal reminders are sent as DMs.~~ Superseded by D40. | Tim |
 | D6 | 2026-11-10 | One reminder channel per server, set by an admin (Manage Server). All server reminders go there. | Tim |
 | D7 | 2026-11-10 | Repeating to-do: when a new occurrence fires while the previous reminder is still unchecked, the old reminder is deleted and marked *missed*. At most one open reminder per repeating to-do. | Tim |
 | D8 | 2026-11-10 | Completed to-dos are kept in the DB as history (hidden from lists). Optional retention cleanup later (S7). | Tim |
@@ -57,14 +60,14 @@ To-dos can be one-time (untimed, or timed with a date + time) or repeating (dail
 | D16 | 2026-11-10 | ~~Python 3.13, `python:3.13-slim` base image.~~ Superseded by D31. | Claude |
 | D17 | 2026-11-10 | One-time to-dos are either **untimed** (no date, no time) or **timed** (date + time). A date without a time is rejected. (was A1) | Tim |
 | D18 | 2026-11-10 | When entering a timed to-do the date may be omitted: the next occurrence of that time is used (today if still ahead, else tomorrow). A date can always be given explicitly, including today. A date + time in the past is rejected. (was A2) | Tim |
-| D19 | 2026-11-10 | Personal to-dos have no assignees. (was A3) | Tim |
-| D20 | 2026-11-10 | Server to-dos can be edited/deleted/reassigned by the creator, any assignee, or anyone with Manage Server. (was A4) | Tim |
+| D19 | 2026-11-10 | ~~Personal to-dos have no assignees. (was A3)~~ Superseded by D40. | Tim |
+| D20 | 2026-11-10 | ~~Server to-dos can be edited/deleted/reassigned by the creator, any assignee, or anyone with Manage Server. (was A4)~~ Superseded by D50/D51. | Tim |
 | D21 | 2026-11-10 | Monthly rules come in two forms: n-th weekday (1st–4th or last) **and** day of month (1–31 or last day). A day that doesn't exist in a month falls back to that month's last day (31st → 30 Apr, 28/29 Feb). (was A5) | Tim |
 | D22 | 2026-11-10 | Weekly rules may have multiple times per day. (was A6) | Tim |
 | D23 | 2026-11-10 | A to-do can be completed while subtasks are unticked. (was A7) | Tim |
 | D24 | 2026-11-10 | Server to-dos use the creator's timezone unless overridden. (was A8) | Tim |
 | D25 | 2026-11-10 | Users who never set a timezone get `DEFAULT_TIMEZONE`, default **UTC**; the bot mentions this once. (was A10) | Tim |
-| D26 | 2026-11-10 | A failed DM reminder is marked failed and the user is warned on their next command. (was A11) | Tim |
+| D26 | 2026-11-10 | ~~A failed DM reminder is marked failed and the user is warned on their next command. (was A11)~~ Superseded by D40. | Tim |
 | D27 | 2026-11-10 | Command replies are ephemeral (only the invoker sees them); `/todo list post:true` shares a server list with the channel. (was A12) | Tim |
 | D28 | 2026-11-10 | English only, for output **and** input (no Dutch keywords). (was A13) | Tim |
 | D29 | 2026-11-10 | Up to **50 subtasks** per to-do. Discord select menus hold 25 options, so subtask pickers use two selects; message text is trimmed to Discord's embed limits (see §4.11). (was A14) | Tim |
@@ -73,21 +76,38 @@ To-dos can be one-time (untimed, or timed with a date + time) or repeating (dail
 | D32 | 2026-11-10 | `DEV_GUILD_ID` is replaced by `SYNC_GLOBAL` (bool, default true) + `SYNC_GUILD_IDS` (comma-separated). Never register a command both globally and in a guild (Discord then shows it twice). **`SYNC_GLOBAL=true`** (production) → global sync; every guild in `SYNC_GUILD_IDS` gets its guild commands deleted (cleanup after server-only mode). **`SYNC_GLOBAL=false`** (dev bot) → server-only mode: commands synced to the listed guilds (instant), global commands cleared, so DMs/user installs have none; config rejects it with an empty list. | Tim |
 | D33 | 2026-11-10 | The env file lives at `configs/.env` (git-ignored with the rest of `configs/`), not the repo root. Both compose services load it via `env_file`; `config.py` reads it for local runs. `configs/.env.example` is the tracked template (`.gitignore` uses `configs/*` + `!configs/.env.example`). | Tim |
 | D34 | 2026-11-11 | Internal data models use **pydantic** with `strict=True` + `frozen=True` (no type coercion; a wrong type is a bug and fails loudly). Applies to the service DTOs and inputs (`TodoView`, `SubtaskView`, `OccurrenceView`, `UpcomingItem`, `Page`, `DueReminder`, `GuildSettingsView`, `DueInput`, `TodoPatch`) and to `Actor`, `Outcome` and the effects (`DeleteMessage`). Test fakes may stay plain dataclasses. `TodoPatch` uses `model_fields_set` instead of an `UNSET` sentinel. | Tim |
-| D35 | 2026-11-11 | `/todo upcoming` without `scope` in a server where the bot is installed replies with buttons **Server list / Personal list / Both** and shows the chosen view. Elsewhere (DMs, user-install only) it shows the personal list directly. An explicit `scope` skips the buttons. | Tim |
+| D35 | 2026-11-11 | ~~`/todo upcoming` without `scope` in a server where the bot is installed replies with buttons **Server list / Personal list / Both** and shows the chosen view. Elsewhere (DMs, user-install only) it shows the personal list directly. An explicit `scope` skips the buttons.~~ Superseded by D49. | Tim |
 | D36 | 2026-11-11 | An admin can unset the reminder channel with `/sidequest channel clear:True` (Manage Server, same runtime check as setting it). `channel` and `clear:True` together is an error; clearing when none is set says so. Before clearing, the reply warns how many open timed server to-dos will stop reminding and offers **Confirm / Cancel** buttons. After confirming, reminders that come due without a channel are marked failed (`no_channel`), as today; existing reminder messages stay and keep working. New timed server to-dos are refused until a channel is set again. | Tim |
 | D37 | 2026-11-11 | `/todo show` → **Done**: the embed and components disappear; the message becomes only "✅ Checked off **title**.", plus "Next: <timestamp>" (Discord timestamp) for a repeating to-do with a next occurrence. The same wording is used everywhere something is checked off: `/todo done`, `/todo upcoming`, a reminder's Done button. `/todo upcoming` keeps showing its refreshed list below. | Tim |
 | D38 | 2026-11-12 | A stuck bot restarts by itself. Docker only *marks* a container unhealthy, so a watchdog thread in the bot (`health.Watchdog`) exits the process when the scheduler heartbeat hasn't changed for 3 minutes (or is missing 5 minutes after start), and `restart: unless-stopped` restarts it. A thread still fires when the event loop is blocked. Time is measured on a monotonic clock, because the Pi's wall clock jumps forward when NTP syncs after boot. Chosen over an autoheal container, which needs the Docker socket (root-equivalent access to the Pi). The Docker `HEALTHCHECK` stays for visibility in `docker compose ps`. Side effect: while the database is down the bot restarts every few minutes. | Tim (requirement), Claude (mechanism) |
 | D39 | 2026-11-12 | To-do **details** render Discord markdown (bold, lists, links) in reminders and `/todo show`; only mentions are escaped. Titles and subtask titles stay fully escaped (mentions + markdown). The restart loop on a persistent scheduler error (D38) is accepted. | Tim |
+| D40 | 2026-11-12 | **No personal lists, no DMs.** Sidequest only works in servers where the bot is installed. Commands are guild-install + guild-context only (no user install, no DMs, no group DMs). Reminders are only posted in the server's reminder channel. Supersedes D2, D5, D19, D26 and D35. The DM verification and the "commands don't work in DMs" future-work item are closed. | Tim |
+| D41 | 2026-11-12 | A server has **any number of named lists** (max 25). Each to-do belongs to exactly one list. One reminder channel per server for all lists (D6 unchanged). | Tim |
+| D42 | 2026-11-12 | Every server has a **"Default List"**, its *fallback list*: users who never picked a default get it. It can be renamed but **not deleted**. Migration `0003` creates it for existing servers; for new servers it is created the first time anyone uses Sidequest there (the bot has no `guilds` intent, D11, so it never hears about joining). | Tim (list), Claude (mechanism) |
+| D43 | 2026-11-12 | **List names** are unique per server, **case-insensitive**, trimmed, 1–50 characters. | Tim |
+| D44 | 2026-11-12 | **To-do titles** are unique among the **open** to-dos of one list, **case-insensitive**. Done and deleted to-dos don't count. Checked on create, title edit and move. | Tim |
+| D45 | 2026-11-12 | Each user can choose a **default list per server** with `/settings default-list`. Commands without a `list` option use it. If it is unset, or that list was deleted, the server's fallback list is used. | Tim |
+| D46 | 2026-11-12 | **Managing lists:** anyone in the server can create a list and becomes its **owner**. Renaming, deleting, managing collaborators and transferring ownership need the owner or Manage Server. The fallback list has **no owner** (D51). | Tim |
+| D47 | 2026-11-12 | **Deleting a list** with open to-dos asks: **Delete them** (cancelled, reminder messages deleted), **Move them** to another list (select), or **Cancel**. A move is refused if any title would clash on the target list; the reply names the clashing titles. An empty list gets Delete/Cancel. Finished history on a deleted list is deleted with it. | Tim |
+| D48 | 2026-11-12 | **`/todo move`** moves one to-do to another list in the same server (edit rights on its list, add rights on the target, title must not clash). Reminders, subtasks and assignees stay. | Tim |
+| D49 | 2026-11-12 | Commands that show to-dos take an optional `list` option and show **one** list. `/todo list` without `list` shows your default list (D45). `/todo upcoming` without `list` uses **your own default-list setting only**; if you haven't set one, `list` is required and the reply says so. The Server/Personal/Both buttons (D35) are gone. Places that mix lists (autocomplete) show the list name next to the title. | Tim |
+| D50 | 2026-11-12 | **Collaborators.** Every list except the fallback list has an **owner** and up to 25 **collaborators**. Everyone in the server can **see** every list. Only the owner, collaborators and Manage Server can **add, edit, set details, assign, add/remove subtasks, delete, move, check off** to-dos and **tick subtasks** on it, also via a reminder's Done button and subtask select. Replaces D3 and D20 for these lists. Collaborators can't rename/delete the list or manage collaborators. Assignees don't have to be collaborators: they still get pinged. | Tim |
+| D51 | 2026-11-12 | **The fallback list is open to everyone.** Every member can add, edit, delete, assign, move and check off its to-dos and tick subtasks. Only **Manage Server** can **rename** it. It never has an owner or collaborators, can't be transferred, and **can't be deleted by anyone**, not even Manage Server. | Tim |
+| D52 | 2026-11-12 | **Transferring ownership:** `/lists transfer` by the owner or Manage Server; not for the fallback list. The new owner must be a server member and not a bot; if they were a collaborator they stop being one. The **old owner becomes a collaborator**; if that would exceed 25 collaborators, the transfer is refused ("remove a collaborator first"). | Tim |
+| D53 | 2026-11-12 | `/settings default-list` only accepts a list you can add to-dos to. If you later lose that right, `/todo add` without `list` says so and names the list, rather than silently picking another. | Tim |
 
 ---
 
 ## 4. Functional spec
 
-### 4.1 Lists and scope
-- A to-do belongs to exactly one list: `server` (with a `guild_id`) or `personal` (owned by a user, no guild).
-- Server to-dos are visible to every member of that server who uses the bot there.
-- Personal to-dos are visible only to their owner, from anywhere (any server, DMs).
-- Server-list commands only work in a server where the bot is installed. Personal-list commands work everywhere (the app is both guild- and user-installable).
+### 4.1 Lists
+- Sidequest only works in servers where the bot is installed (D40). Every command is guild-install, server-only.
+- A server has up to 25 named lists (D41). Names are unique per server, case-insensitive, 1–50 characters (D43).
+- Every server has an ownerless fallback list, "Default List" (D42): open to every member (D51), renamable only with Manage Server, never deletable. It is created on first use.
+- Other lists have an owner (the creator, D46) and up to 25 collaborators (D50). Ownership can be transferred (D52).
+- A to-do belongs to exactly one list; open titles are unique per list, case-insensitive (D44). `/todo move` moves it (D48).
+- Every member sees every list and its to-dos. Who may change them: §4.10.
+- Each user may pick a default list per server (D45, D53); commands without `list` use it, else the fallback list. `/todo upcoming` needs the user's own setting or an explicit `list` (D49).
 
 ### 4.2 To-do kinds
 | Kind | When | Reminder |
@@ -117,8 +137,7 @@ DST: a nonexistent local time (spring-forward gap) shifts forward by the gap; an
 - Shown in the reminder and in `/todo show`.
 
 ### 4.6 Assignees
-- Server to-dos: one or more assignees; defaults to the creator. Reminders ping all assignees.
-- Personal to-dos: no assignees; the owner is implicit (D19).
+- One or more assignees; defaults to the creator. Reminders ping all assignees. Assignees don't have to be collaborators of the list (D50).
 
 ### 4.7 Timezones and time I/O
 - Each user can set a default timezone (IANA name, autocomplete). Fallback when unset: `DEFAULT_TIMEZONE` env (default `UTC`) (D25).
@@ -127,9 +146,8 @@ DST: a nonexistent local time (spring-forward gap) shifts forward by the gap; an
 - Output: points in time → Discord timestamps via one helper module. Never `strftime` a point in time into user-facing text.
 
 ### 4.8 Reminders
-- **Server:** posted in the server's reminder channel; content pings the assignees (users only — never roles/everyone); an embed shows title, details, due time, rule description, subtasks; components: **Done** button and (if subtasks exist) a subtask multi-select.
-- **Personal:** same message, sent as a DM to the owner.
-- **Done:** completes the occurrence (and a one-time to-do), then deletes the reminder message. Anyone who can see it may press it (D3).
+- Posted in the server's reminder channel; content pings the assignees (users only — never roles/everyone); an embed shows title, details, due time, rule description, subtasks, and the list name in the footer; components: **Done** button and (if subtasks exist) a subtask multi-select.
+- **Done:** completes the occurrence (and a one-time to-do), then deletes the reminder message. Allowed for whoever may check off on that list (D50/D51); anyone else gets an ephemeral refusal and the reminder stays.
 - Repeating: a new occurrence replaces an unchecked previous reminder (D7).
 - Bot was down: overdue reminders are posted on startup, marked late. A repeating to-do never floods — at most one catch-up reminder.
 - A to-do checked off before it is due (via `/todo upcoming` or `/todo done`) never sends that reminder. For repeating to-dos this skips only that occurrence.
@@ -137,18 +155,24 @@ DST: a nonexistent local time (spring-forward gap) shifts forward by the gap; an
 ### 4.9 Where to-dos are shown
 - Timed: reminder message at due time, and `/todo upcoming` (check off early from there).
 - Untimed: only via `/todo list` and `/todo show`.
-- Command responses are ephemeral by default; `/todo list post:true` shares a server list publicly (D27).
+- Command responses are ephemeral by default; `/todo list post:true` shares a list publicly (D27).
 
 ### 4.10 Permissions
-| Action | Server to-do | Personal to-do |
+"Member" = anyone in that server. Manage Server may do everything on owned lists; the scheduler (system actor) passes every check.
+
+| Action | Owned list (D50) | Fallback list "Default List" (D51) |
 |---|---|---|
-| View, tick subtasks, complete | any member in that server (D3) | owner |
-| Create | any member | owner |
-| Edit, details, assign, subtask add/remove, delete | creator, any assignee, or Manage Server (D20) | owner |
+| See the list and its to-dos | any member | any member |
+| Check off (command, upcoming, reminder Done), tick subtasks | owner, collaborators, Manage Server | any member |
+| Add a to-do (incl. moving one *onto* the list) | owner, collaborators, Manage Server | any member |
+| Edit, details, assign, subtask add/remove, delete, move *off* the list | owner, collaborators, Manage Server | any member |
+| Rename the list | owner, Manage Server | Manage Server only |
+| Delete the list, set collaborators, transfer | owner, Manage Server | nobody (Manage Server neither) |
+| Create a list | any member | — |
 | Set reminder channel | Manage Server | — |
 
 ### 4.11 Limits (D29)
-Title ≤ 200 chars · details ≤ 4000 · subtask title ≤ 100 · subtasks ≤ 50 per to-do · assignees ≤ 10 · times per rule ≤ 12.
+Title ≤ 200 chars · details ≤ 4000 · subtask title ≤ 100 · subtasks ≤ 50 per to-do · assignees ≤ 10 · times per rule ≤ 12 · list name ≤ 50 · lists ≤ 25 per server · collaborators ≤ 25 per list.
 
 Discord limits the code must respect when rendering:
 - A select menu holds at most 25 options → subtask pickers use up to two selects (1–25, 26–50). Option labels are cut to 100 chars.
@@ -202,11 +226,11 @@ src/sidequest/
   __init__.py  __main__.py  cli.py  config.py  logging.py
   core/       errors.py  clock.py  timeparse.py  tz.py  recurrence.py  discord_time.py  limits.py
   db/         base.py  models.py  session.py
-  services/   actor.py  settings.py  todos.py  subtasks.py  occurrences.py  permissions.py  effects.py
+  services/   actor.py  settings.py  lists.py  todos.py  subtasks.py  occurrences.py  permissions.py  effects.py
   scheduler/  loop.py  signal.py  notifier.py      # notifier = Protocol; bot implements it
   bot/        client.py  errors.py  autocomplete.py  render.py
-              commands/ todo.py  repeat.py  subtask.py  settings.py  admin.py
-              views/    reminder.py  listing.py  upcoming.py  modals.py  assign.py
+              commands/ todo.py  repeat.py  subtask.py  settings.py  admin.py  lists.py
+              views/    reminder.py  listing.py  upcoming.py  modals.py  assign.py  list_delete.py  collaborators.py
 tests/  unit/  integration/
 ```
 
@@ -215,8 +239,7 @@ Fully possible. With `Intents.none()` the bot still receives every slash command
 - No guild/channel/member cache. Work with IDs: `interaction.guild_id`, `interaction.channel_id`, `interaction.permissions` (the invoker's resolved permissions come with the interaction).
 - Post to channels via `client.get_partial_messageable(channel_id)`; delete via partial messages. DMs via `client.create_dm(discord.Object(user_id))`.
 - When an admin sets the reminder channel, validate it by posting a short confirmation message there (proves the bot can send).
-- **DM limitation:** Discord only lets a bot DM a user it shares a server with (and who allows DMs). Users with only a personal list must share at least one server with the bot. A failed DM is recorded and the user is warned on their next command (S6). Verify whether a user-install alone suffices during S6.
-  - *S6 (2026-11-11):* not verified yet: Claude can't use Discord, so it's on Tim's manual checklist (a test account that has the app user-installed and shares no server with the bot). Until then, assume a shared server is required. The code doesn't depend on the answer: a refused DM is recorded as `dm_closed` and the user is warned on their next command (D26).
+- No DMs (D40).
 
 ### 5.5 Scheduling model
 - `occurrences` table holds concrete reminder instances. A timed one-time to-do has one; a repeating to-do always has exactly one **pending** future occurrence (materialized one at a time).
@@ -243,6 +266,7 @@ Fully possible. With `Intents.none()` the bot still receives every slash command
 | S5 | Commands | S4 | Slash commands + views (not reminders) |
 | S6 | Reminders | S4 (S5 for shared render helpers) | Scheduler, reminder messages, DMs |
 | S7 | Ops & hardening | S1–S6 | Health, backups, retention, runbook, final review |
+| S8 | Server lists | S1–S7 | Drop personal lists/DMs; named lists, collaborators, default list per user, migration `0003` |
 
 ---
 

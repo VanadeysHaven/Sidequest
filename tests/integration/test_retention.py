@@ -5,7 +5,7 @@ from datetime import datetime, time, timedelta
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from sidequest.core.enums import OccurrenceStatus, Scope
+from sidequest.core.enums import OccurrenceStatus
 from sidequest.core.recurrence import DailyRule
 from sidequest.db.models import Occurrence, Subtask, Todo
 from sidequest.scheduler.retention import HistoryPurger
@@ -43,9 +43,7 @@ UNTIMED = DueInput()
 
 
 async def _once(uow: Uow, title: str, due: DueInput = UNTIMED) -> int:
-    out = await todos.create_once(
-        uow, member(OWNER, GUILD), scope=Scope.SERVER, title=title, due=due
-    )
+    out = await todos.create_once(uow, member(OWNER, GUILD), title=title, due=due)
     return out.value.id
 
 
@@ -53,7 +51,6 @@ async def _recurring(uow: Uow, title: str) -> int:
     out = await todos.create_recurring(
         uow,
         member(OWNER, GUILD),
-        scope=Scope.SERVER,
         title=title,
         rule=DailyRule(times=["08:00"]),
     )

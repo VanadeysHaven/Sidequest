@@ -6,7 +6,6 @@ import discord
 from discord import app_commands
 
 from sidequest.bot import adapter, autocomplete, options
-from sidequest.bot.adapter import ScopeOption
 from sidequest.bot.commands import common
 from sidequest.bot.commands.common import CREATE_DESCRIPTIONS, Title
 from sidequest.bot.options import WeekdayOption, WeekOption
@@ -31,7 +30,8 @@ def daily_command() -> app_commands.Command:  # type: ignore[type-arg]
     @app_commands.command(name="daily", description="Add a to-do that repeats every day")
     @app_commands.describe(**CREATE_DESCRIPTIONS)
     @app_commands.describe(times="24-hour times, comma-separated, e.g. 08:00, 20:00")
-    @app_commands.autocomplete(timezone=autocomplete.timezone)
+    @app_commands.rename(list_="list")
+    @app_commands.autocomplete(timezone=autocomplete.timezone, list_=autocomplete.todo_list)
     async def daily(
         interaction: discord.Interaction,
         title: Title,
@@ -40,17 +40,17 @@ def daily_command() -> app_commands.Command:  # type: ignore[type-arg]
         assignee: discord.User | None = None,
         assignee2: discord.User | None = None,
         assignee3: discord.User | None = None,
-        scope: ScopeOption | None = None,
+        list_: str | None = None,
         details: bool = False,
     ) -> None:
-        common.check_options(interaction=interaction, scope=scope, timezone=timezone)
+        common.check_options(list_value=list_, timezone=timezone)
         rule = options.daily_rule(times)
 
         async def create(uow: Uow, actor: Actor, title: str, text: str | None) -> Outcome[TodoView]:
             return await todos.create_recurring(
                 uow,
                 actor,
-                scope=adapter.resolve_scope(actor, scope),
+                list_id=adapter.parse_list_id(list_),
                 title=title,
                 rule=rule,
                 details=text,
@@ -72,7 +72,8 @@ def weekly_command() -> app_commands.Command:  # type: ignore[type-arg]
         days="e.g. mon,thu or weekdays / weekend",
         times="24-hour times, comma-separated, e.g. 08:00, 20:00",
     )
-    @app_commands.autocomplete(timezone=autocomplete.timezone)
+    @app_commands.rename(list_="list")
+    @app_commands.autocomplete(timezone=autocomplete.timezone, list_=autocomplete.todo_list)
     async def weekly(
         interaction: discord.Interaction,
         title: Title,
@@ -82,17 +83,17 @@ def weekly_command() -> app_commands.Command:  # type: ignore[type-arg]
         assignee: discord.User | None = None,
         assignee2: discord.User | None = None,
         assignee3: discord.User | None = None,
-        scope: ScopeOption | None = None,
+        list_: str | None = None,
         details: bool = False,
     ) -> None:
-        common.check_options(interaction=interaction, scope=scope, timezone=timezone)
+        common.check_options(list_value=list_, timezone=timezone)
         rule = options.weekly_rule(days, times)
 
         async def create(uow: Uow, actor: Actor, title: str, text: str | None) -> Outcome[TodoView]:
             return await todos.create_recurring(
                 uow,
                 actor,
-                scope=adapter.resolve_scope(actor, scope),
+                list_id=adapter.parse_list_id(list_),
                 title=title,
                 rule=rule,
                 details=text,
@@ -116,7 +117,8 @@ def monthly_weekday_command() -> app_commands.Command:  # type: ignore[type-arg]
         weekday="Day of the week",
         times="24-hour times, comma-separated, e.g. 08:00, 20:00",
     )
-    @app_commands.autocomplete(timezone=autocomplete.timezone)
+    @app_commands.rename(list_="list")
+    @app_commands.autocomplete(timezone=autocomplete.timezone, list_=autocomplete.todo_list)
     async def monthly_weekday(
         interaction: discord.Interaction,
         title: Title,
@@ -127,17 +129,17 @@ def monthly_weekday_command() -> app_commands.Command:  # type: ignore[type-arg]
         assignee: discord.User | None = None,
         assignee2: discord.User | None = None,
         assignee3: discord.User | None = None,
-        scope: ScopeOption | None = None,
+        list_: str | None = None,
         details: bool = False,
     ) -> None:
-        common.check_options(interaction=interaction, scope=scope, timezone=timezone)
+        common.check_options(list_value=list_, timezone=timezone)
         rule = options.monthly_weekday_rule(week, weekday, times)
 
         async def create(uow: Uow, actor: Actor, title: str, text: str | None) -> Outcome[TodoView]:
             return await todos.create_recurring(
                 uow,
                 actor,
-                scope=adapter.resolve_scope(actor, scope),
+                list_id=adapter.parse_list_id(list_),
                 title=title,
                 rule=rule,
                 details=text,
@@ -159,7 +161,8 @@ def monthly_day_command() -> app_commands.Command:  # type: ignore[type-arg]
         day="Day of the month: 1–31 or last (missing days fall back to the month's last day)",
         times="24-hour times, comma-separated, e.g. 08:00, 20:00",
     )
-    @app_commands.autocomplete(timezone=autocomplete.timezone)
+    @app_commands.rename(list_="list")
+    @app_commands.autocomplete(timezone=autocomplete.timezone, list_=autocomplete.todo_list)
     async def monthly_day(
         interaction: discord.Interaction,
         title: Title,
@@ -169,17 +172,17 @@ def monthly_day_command() -> app_commands.Command:  # type: ignore[type-arg]
         assignee: discord.User | None = None,
         assignee2: discord.User | None = None,
         assignee3: discord.User | None = None,
-        scope: ScopeOption | None = None,
+        list_: str | None = None,
         details: bool = False,
     ) -> None:
-        common.check_options(interaction=interaction, scope=scope, timezone=timezone)
+        common.check_options(list_value=list_, timezone=timezone)
         rule = options.monthly_day_rule(day, times)
 
         async def create(uow: Uow, actor: Actor, title: str, text: str | None) -> Outcome[TodoView]:
             return await todos.create_recurring(
                 uow,
                 actor,
-                scope=adapter.resolve_scope(actor, scope),
+                list_id=adapter.parse_list_id(list_),
                 title=title,
                 rule=rule,
                 details=text,

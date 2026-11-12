@@ -86,10 +86,11 @@ async def set_done(
     """Tick exactly `done_ids` among the subtasks in `within` (one select page; None = all).
 
     Subtasks outside `within` are left alone; ids that aren't this to-do's are ignored.
-    Ticking is allowed for anyone who can see the to-do (D3).
+    Ticking needs the same right as checking off (D50).
     """
     todo = await c.load_todo(uow, actor, todo_id, lock=True)
     c.require_open(todo)
+    c.require_complete(actor, todo)
     now = uow.clock.now()
     for sub in todo.subtasks:
         if within is not None and sub.id not in within:
@@ -106,6 +107,7 @@ async def set_done(
 
 async def toggle(uow: Uow, actor: Actor, subtask_id: int) -> Outcome[TodoView]:
     todo, subtask = await _todo_of_subtask(uow, actor, subtask_id)
+    c.require_complete(actor, todo)
     if subtask.done_at is None:
         subtask.done_at = uow.clock.now()
         subtask.done_by = actor.user_id

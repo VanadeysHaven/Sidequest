@@ -12,7 +12,6 @@ from sidequest.services.dto import DueReminder
 from sidequest.services.effects import Effect
 from sidequest.services.occurrences import (
     FAILURE_CHANNEL_GONE,
-    FAILURE_DM_CLOSED,
     FAILURE_FORBIDDEN,
     FAILURE_NO_CHANNEL,
 )
@@ -31,30 +30,20 @@ class DiscordNotifier:
         await adapter.run_effects(self._client, effects)
 
     async def post(self, reminder: DueReminder) -> PostResult:
-        """Server to-do → the guild's reminder channel; personal to-do → DM to the owner."""
+        """Post in the server's reminder channel (no DMs, D40)."""
         todo = reminder.todo
-        channel: discord.abc.Messageable
-        if reminder.dm_user_id is not None:
-            try:
-                channel = await self._client.create_dm(discord.Object(id=reminder.dm_user_id))
-            except (discord.Forbidden, discord.NotFound):
-                return Failed(reason=FAILURE_DM_CLOSED)
-        elif reminder.channel_id is not None:
-            channel = self._client.get_partial_messageable(reminder.channel_id)
-        else:
+        if reminder.channel_id is None:
             return Failed(reason=FAILURE_NO_CHANNEL)
-
-        dm = reminder.dm_user_id is not None
+        channel = self._client.get_partial_messageable(reminder.channel_id)
         try:
             message = await channel.send(
-                content=None if dm else render.reminder_pings(todo),
+                content=render.reminder_pings(todo),
                 embed=render.reminder_embed(todo, reminder.occurrence),
                 view=reminder_view(reminder.occurrence.id, todo),
                 allowed_mentions=PINGS,
             )
         except discord.Forbidden:
-            # DMs: 50007 "Cannot send messages to this user" (DMs closed, or no shared server).
-            return Failed(reason=FAILURE_DM_CLOSED if dm else FAILURE_FORBIDDEN)
+            return Failed(reason=FAILURE_FORBIDDEN)
         except discord.NotFound:
-            return Failed(reason=FAILURE_DM_CLOSED if dm else FAILURE_CHANNEL_GONE)
+            return Failed(reason=FAILURE_CHANNEL_GONE)
         return Posted(channel_id=message.channel.id, message_id=message.id)

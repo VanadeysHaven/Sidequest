@@ -7,7 +7,7 @@ import math
 from datetime import datetime
 from typing import Literal
 
-from sidequest.core.enums import OccurrenceStatus, Scope, TodoKind, TodoStatus
+from sidequest.core.enums import OccurrenceStatus, TodoKind, TodoStatus
 from sidequest.core.recurrence import RecurrenceRule
 from sidequest.services.effects import Effect
 from sidequest.services.model import StrictModel
@@ -63,10 +63,11 @@ class OccurrenceView(StrictModel):
 
 class TodoView(StrictModel):
     id: int
-    scope: Scope
-    guild_id: int | None
+    guild_id: int
+    list_id: int
+    list_name: str
     owner_id: int
-    """The creator (server) or owner (personal)."""
+    """The creator (no special rights since D50)."""
     title: str
     details: str | None
     kind: TodoKind
@@ -87,7 +88,9 @@ class TodoView(StrictModel):
     completed_at: datetime | None
     completed_by: int | None
     can_edit: bool
-    """Whether the actor who asked may edit/delete/assign (BRIEF §4.10)."""
+    """Whether the actor who asked may edit/delete/assign/move (BRIEF §4.10)."""
+    can_complete: bool
+    """Whether the actor who asked may check it off and tick subtasks (D50)."""
 
     @property
     def is_timed(self) -> bool:
@@ -122,9 +125,7 @@ class DueReminder(StrictModel):
     occurrence: OccurrenceView
     todo: TodoView
     channel_id: int | None
-    """Server to-dos: the guild's reminder channel (None if it was never set)."""
-    dm_user_id: int | None
-    """Personal to-dos: the owner to DM."""
+    """The guild's reminder channel (None if none is set)."""
     effects: list[Effect]
     """Messages to delete first (the previous reminder, now missed)."""
 
@@ -132,3 +133,42 @@ class DueReminder(StrictModel):
 class GuildSettingsView(StrictModel):
     guild_id: int
     reminder_channel_id: int | None
+
+
+class ListView(StrictModel):
+    """One list of a server, as seen by the actor who asked."""
+
+    id: int
+    guild_id: int
+    name: str
+    owner_id: int | None
+    """None for the server's fallback list (open to everyone, D51)."""
+    collaborator_ids: tuple[int, ...]
+    is_fallback: bool
+    """The server's "Default List" (D42): can't be deleted, no owner or collaborators."""
+    is_my_default: bool
+    """The actor's effective default list here (their setting, else the fallback, D45)."""
+    open_count: int
+    can_manage: bool
+    """May delete it, set collaborators, transfer it (D46; never for the fallback)."""
+    can_rename: bool
+    can_add: bool
+    """May add to-dos to it and work on them (D50/D51)."""
+
+
+class ListDeletePreview(StrictModel):
+    """What `/lists delete` asks about (D47)."""
+
+    list: ListView
+    open_count: int
+    targets: list[ListView]
+    """Lists its open to-dos can be moved to: the server's other lists the actor may add to."""
+
+
+class ListDeleteResult(StrictModel):
+    name: str
+    deleted: int
+    """Open to-dos that were deleted with the list."""
+    moved: int
+    moved_to: str | None
+    """Name of the list the open to-dos were moved to."""

@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from sidequest.core.enums import Scope, TodoStatus
+from sidequest.core.enums import TodoStatus
 from sidequest.core.errors import InvalidOperation, LimitExceeded
 from sidequest.core.recurrence import DailyRule
 from sidequest.services import settings, subtasks, todos
@@ -30,7 +30,6 @@ async def _recurring_todo(uow: Uow) -> int:
     out = await todos.create_recurring(
         uow,
         member(OWNER, GUILD_A),
-        scope=Scope.SERVER,
         title="water plants",
         rule=DailyRule(times=["08:00"]),
     )
@@ -60,7 +59,7 @@ async def test_completing_recurring_todo_early_resets_subtasks_and_schedules_nex
 
 async def test_subtask_list_is_capped_at_50(uow: Uow) -> None:
     actor = member(OWNER, GUILD_A)
-    out = await todos.create_once(uow, actor, scope=Scope.PERSONAL, title="long list")
+    out = await todos.create_once(uow, actor, title="long list")
     tid = out.value.id
     await subtasks.add(uow, actor, tid, [f"step {i}" for i in range(50)])
     with pytest.raises(LimitExceeded):
@@ -69,13 +68,13 @@ async def test_subtask_list_is_capped_at_50(uow: Uow) -> None:
 
 async def test_subtask_title_over_100_characters_is_rejected(uow: Uow) -> None:
     actor = member(OWNER, GUILD_A)
-    out = await todos.create_once(uow, actor, scope=Scope.PERSONAL, title="x")
+    out = await todos.create_once(uow, actor, title="x")
     with pytest.raises(LimitExceeded):
         await subtasks.add(uow, actor, out.value.id, ["s" * 101])
 
 
 async def test_adding_only_blank_subtask_titles_is_invalid(uow: Uow) -> None:
     actor = member(OWNER, GUILD_A)
-    out = await todos.create_once(uow, actor, scope=Scope.PERSONAL, title="x")
+    out = await todos.create_once(uow, actor, title="x")
     with pytest.raises(InvalidOperation):
         await subtasks.add(uow, actor, out.value.id, ["   "])

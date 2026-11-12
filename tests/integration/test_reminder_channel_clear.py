@@ -4,7 +4,6 @@ from datetime import UTC, datetime, time
 
 import pytest
 
-from sidequest.core.enums import Scope
 from sidequest.core.errors import Forbidden, InvalidOperation, ReminderChannelNotSet
 from sidequest.core.recurrence import DailyRule
 from sidequest.services import occurrences, settings, todos
@@ -41,7 +40,6 @@ async def _timed_server_todo(uow: Uow, guild_id: int = GUILD, title: str = "time
     out = await todos.create_once(
         uow,
         member(OWNER, guild_id),
-        scope=Scope.SERVER,
         title=title,
         due=DueInput(time=time(10, 0)),
     )
@@ -91,20 +89,11 @@ async def test_count_scheduled_server_todos_counts_only_open_timed_server_todos(
     await todos.create_recurring(
         uow,
         member(OWNER, GUILD),
-        scope=Scope.SERVER,
         title="daily",
         rule=DailyRule(times=["08:00"]),
     )
     # Does not count: untimed server to-do.
-    await todos.create_once(uow, member(OWNER, GUILD), scope=Scope.SERVER, title="untimed")
-    # Does not count: personal timed to-do.
-    await todos.create_once(
-        uow,
-        member(OWNER, None),
-        scope=Scope.PERSONAL,
-        title="personal",
-        due=DueInput(time=time(10, 0)),
-    )
+    await todos.create_once(uow, member(OWNER, GUILD), title="untimed")
     # Does not count: timed server to-do in another guild.
     await _timed_server_todo(uow, guild_id=GUILD_OTHER, title="other guild")
     # Does not count: timed server to-do that is completed.

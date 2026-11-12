@@ -13,7 +13,7 @@
 | S5 | Commands | ✅ done | `claude/s5-commands` |
 | S6 | Reminders | ✅ done | `claude/s6-reminders` |
 | S7 | Ops & hardening | ✅ done | `claude/s7-ops` |
-| S8 | Server lists (no personal lists/DMs; collaborators) | ⏭️ next | `claude/s8-server-lists` |
+| S8 | Server lists (no personal lists/DMs; collaborators) | 👀 waiting for review | `claude/s8-server-lists` |
 
 Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's review/commit · ✅ done
 
@@ -21,11 +21,11 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
 - [x] Review assumptions A1–A14 (done 2026-11-10 → decisions D17–D29).
 - [x] A9: Pi confirmed 64-bit (`aarch64` / `arm64`) → D30.
 - [ ] Create a **dev** Discord application (separate from production) with a test server; note its token and the test server ID for `SYNC_GUILD_IDS`.
-- [ ] In the Developer Portal → Installation: enable **Guild Install** (scopes `applications.commands`, `bot`; permissions View Channel, Send Messages, Embed Links) and **User Install** (`applications.commands`). Leave all privileged intents off.
+- [ ] In the Developer Portal → Installation: enable **Guild Install** (scopes `applications.commands`, `bot`; permissions View Channel, Send Messages, Embed Links). ~~and **User Install**~~ Since S8 (D40): **untick User Install**. Leave all privileged intents off.
 
 ## Future work (Tim's notes, not scheduled)
 
-- **Commands don't work in DMs** (Tim, 2026-11-11; accepted for now). Not investigated yet. First suspect: the dev bot runs with `SYNC_GLOBAL=false`, and by D32 server-only mode clears the global commands, so DMs and user installs get no commands at all. That would make this expected on the dev bot. To check: does it also happen on the production bot (`SYNC_GLOBAL=true`)? If yes, look at the install contexts (`ANYWHERE_INSTALLS` / `ANYWHERE_CONTEXTS` in `bot/commands/common.py`), whether User Install is enabled in the Developer Portal, and whether the user has the app user-installed. Also blocks two items in the combined S5+S6 checklist: "personal to-do visible in DMs" and the **DM verification** (can the bot DM a user who has the app user-installed but shares no server with it? Record the answer in BRIEF §5.4). Do both once DM commands work.
+- ~~**Commands don't work in DMs**~~ Closed by S8 (D40): Sidequest has no DMs any more, so this and the DM verification are obsolete.
 
 ## Handoff log
 
@@ -154,7 +154,7 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - [x] `/todo repeat weekly days:mon,thu times:12:00` → description reads correctly, next-occurrence timestamp right.
   - [x] 30 subtasks (`/todo subtask add` with `;`) → two selects in `/todo show`; ticking updates the embed; no embed error.
   - [x] `/todo add details:True` opens a modal; multi-line text shows in `/todo show`; the "Edit details" button and `/todo details` prefill it; emptying it removes the details.
-  - [ ] Personal to-do created in a server is visible in DMs with the bot, and not to another user.
+  - [x] ~~Personal to-do created in a server is visible in DMs with the bot, and not to another user.~~ Obsolete (S8, D40).
   - [x] `/todo upcoming` in a server without `scope` → Server / Personal / Both buttons; each shows the right items. In DMs → personal list straight away.
   - [x] `/todo upcoming` → check one off early → it disappears and the list refreshes.
   - [x] `/todo assign` (select prefilled); a non-assignee without Manage Server can't edit, assign or delete.
@@ -174,7 +174,7 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
   - [x] Restart the bot (`docker compose restart bot`) → an old reminder's Done button and select still work.
   - [x] Stop the bot past a due time, start it → one reminder, marked "Late — was due …" (a daily to-do down for several days: still only one).
   - [x] Turn off "Allow DMs from server members" → a personal reminder fails → warning on the next command.
-  - [ ] **DM verification (BRIEF §5.4, postponed until DMs work — see Future work):** a test account that has the app user-installed and shares **no** server with the bot creates a personal timed to-do in DMs. Does the reminder DM arrive? Tell Claude the answer so it can be recorded.
+  - [x] ~~**DM verification (BRIEF §5.4, postponed until DMs work — see Future work):** a test account that has the app user-installed and shares **no** server with the bot creates a personal timed to-do in DMs. Does the reminder DM arrive? Tell Claude the answer so it can be recorded.~~ Obsolete (S8, D40).
   - [x] Heartbeat: `docker compose exec bot cat /tmp/sidequest-heartbeat` shows a recent UTC time.
   - [x] All times show as Discord timestamps.
   - **D37 check-off wording:**
@@ -253,3 +253,24 @@ Legend: ⬜ todo · ⏭️ next · 🔨 in progress · 👀 waiting for Tim's re
 - Branch `claude/s8-server-lists` was created from `claude/s7-ops` for this brief. No code changed.
 - Same day, Tim confirmed the open points: `/todo move` (D48) and the default-list rule (D53) stay; `/todo upcoming` shows one list, the user's own default-list setting or else a required `list` option (D49); non-collaborator assignees get pinged but can't check off; the Default List is created on first use. Only Manage Server may rename the Default List (D51); anyone may work on its to-dos; nobody may delete it.
 - Next: S8. This brief makes the DM future-work item obsolete; S8 closes it.
+
+### 2026-11-12 — S8 Server lists built (waiting for review)
+- All 8 checklist items done on `claude/s8-server-lists`. Uncommitted.
+- **Checks:** `ruff check .` clean · `ruff format --check .` clean · `pytest` with `TEST_DATABASE_URL`: **570 passed** (425 unit, 145 integration; +61 list/permission service tests, +2 migration `0003` tests) · `alembic check`: no drift · the cleanup grep (S8 §6 item 6) only hits unrelated words. Nothing tested in Discord itself.
+- The existing integration tests and the new ones passed on their first run against Postgres; only the migration test needed a fix (it passed ISO strings where asyncpg wants datetimes).
+- **Files:** new: `migrations/versions/0003_server_lists.py`, `core/text.py` (`bold()`: markdown-escaped names in service messages), `services/lists.py`, `bot/commands/lists.py`, `bot/views/{list_delete,collaborators}.py`, `tests/integration/{test_migration_0003,test_services_lists,test_services_list_permissions}.py`. Changed: `db/models.py`, `core/{enums,errors,limits}.py`, `services/{_common,dto,permissions,todos,occurrences,subtasks,settings}.py`, `bot/{adapter,autocomplete,render,notifier,client}.py`, `bot/commands/{common,todo,repeat,todo_list,todo_view,todo_manage,settings,about}.py`, `bot/views/{listing,upcoming,show,reminder,confirm}.py`, existing tests, `docs/claude/{BRIEF,RUNBOOK,PROGRESS}.md`, `README.md`.
+- **How it fits together:** `lists.ensure_guild` creates a server's settings row + ownerless "Default List" on first use (race-safe: `ON CONFLICT DO NOTHING` + `FOR UPDATE` on the settings row). `lists.resolve(uow, actor, list_id | None)` → the given list, else the user's `user_guild_settings` default, else the fallback; it's what every list-taking service calls. Permissions take the **list** (`can_work_on` + wrappers `can_add/can_edit/can_complete`, `can_rename_list`, `can_manage_list`); `_common.todo_load()` loads a to-do's list + collaborators wherever a `TodoView` is built. Open-title uniqueness: a friendly pre-check plus the `uq_todos_list_id_open_title` index mapped to `NameTaken` on flush.
+- **Deviations / decisions:**
+  - `ListView` has an extra `can_rename` (the rename rule differs from `can_manage` on the fallback list; `/lists show` and future UI can use it).
+  - `/lists delete` → "Move them to…" only offers lists the caller **can add to** (the segment doc said "all other lists"). A list the caller can't add to would always fail with `Forbidden`; the service still checks.
+  - Service error messages name lists/titles in bold with markdown escaped via `core.text.bold` (services can't import discord; the bot only escapes mentions in errors).
+  - `/lists collaborators` and `/lists transfer` check fallback/permission **before** showing the select/confirmation (same rules as the service, which checks again on submit).
+  - `/lists transfer` refuses a user who isn't resolved as a server `Member` ("isn't a member of this server"), and bots.
+  - Reminder components now pass Manage Server from `interaction.permissions` (D50: Manage Server may check off on any list). A non-collaborator's Done/select gets the service's `Forbidden` message; the reminder stays.
+  - `/todo upcoming`'s check-off select only offers to-dos the viewer may check off; with none, there's no select (the embed still lists everything).
+  - `/todo list`/`upcoming` embed titles: the list name (`<name> · upcoming, next 7 days`).
+  - The `list` slash option is `list_` in Python with `@app_commands.rename(list_="list")` (avoids shadowing the builtin); `CREATE_DESCRIPTIONS` uses the key `list_`.
+  - `views/listing.ListView` renamed to `ListPageView` (clashed with the `ListView` DTO name).
+  - `committed_sessions` fixture also truncates `todo_lists`.
+  - The `/todo repeat` scope→list swap was a 4×4-line mechanical edit, done with a script instead of a Haiku agent.
+- **Manual test checklist (Tim, dev bot):** the list in `segments/S8-server-lists.md` §7. Also: untick **User Install** in the Developer Portal (RUNBOOK §2).

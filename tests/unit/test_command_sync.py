@@ -16,7 +16,7 @@ from sidequest.scheduler.signal import ScheduleSignal
 from sidequest.services.uow import UowFactory
 
 DATABASE_URL = "postgresql+asyncpg://u:p@h/db"
-TOP_LEVEL_NAMES = ["settings", "sidequest", "todo"]
+TOP_LEVEL_NAMES = ["lists", "settings", "sidequest", "todo"]
 
 SyncCall = tuple[int | None, list[str]]
 

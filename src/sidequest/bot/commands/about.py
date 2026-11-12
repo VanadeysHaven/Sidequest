@@ -28,8 +28,8 @@ def about_text(settings: Settings, started_at: datetime) -> str:
     )
 
 
-@app_commands.allowed_installs(guilds=True, users=True)
-@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.allowed_installs(guilds=True, users=False)
+@app_commands.allowed_contexts(guilds=True, dms=False, private_channels=False)
 class SidequestGroup(app_commands.Group, name="sidequest", description="About Sidequest"):
     def __init__(self, settings: Settings, started_at: datetime) -> None:
         super().__init__()

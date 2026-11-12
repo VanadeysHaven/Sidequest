@@ -11,7 +11,6 @@ Command pattern::
     await reply(interaction, render.something(todo), notes=notes)
 """
 
-import enum
 import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -21,8 +20,6 @@ from typing import Any, Protocol, cast
 import discord
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from sidequest.core.discord_time import ts
-from sidequest.core.enums import Scope
 from sidequest.core.errors import InvalidOperation
 from sidequest.core.timeparse import parse_date, parse_time
 from sidequest.core.tz import get_zone
@@ -38,10 +35,8 @@ log = logging.getLogger(__name__)
 
 NO_MENTIONS = discord.AllowedMentions.none()
 
-NOT_IN_SERVER = (
-    "The server list only works in a server where Sidequest is added. Use `scope: Personal` here."
-)
 PICK_FROM_LIST = "Pick a to-do from the list that appears while you type."
+PICK_A_LIST = "Pick a list from the suggestions that appear while you type."
 
 
 # --- dependencies ------------------------------------------------------------------------
@@ -95,8 +90,8 @@ def uows(interaction: discord.Interaction) -> UowFactory:
 
 
 def actor_from(interaction: discord.Interaction) -> Actor:
-    """`guild_id` only counts where the bot itself is installed in that guild; in a server
-    where the user merely has the app user-installed there is no server list."""
+    """`guild_id` only counts where the bot itself is installed in that guild. Without it
+    the services refuse ("Sidequest only works in a server where it's installed", D40)."""
     guild_id = interaction.guild_id if interaction.is_guild_integration() else None
     perms = interaction.permissions
     return Actor(
@@ -105,22 +100,6 @@ def actor_from(interaction: discord.Interaction) -> Actor:
         can_manage_guild=guild_id is not None and (perms.manage_guild or perms.administrator),
         origin="discord",
     )
-
-
-class ScopeOption(enum.Enum):
-    """The `scope` option. Member names are what Discord shows."""
-
-    Server = "server"
-    Personal = "personal"
-
-
-def resolve_scope(actor: Actor, choice: ScopeOption | None) -> Scope:
-    """Default: the server list where the bot is installed, else the personal list."""
-    if choice is None:
-        return Scope.SERVER if actor.guild_id is not None else Scope.PERSONAL
-    if choice is ScopeOption.Server and actor.guild_id is None:
-        raise InvalidOperation(NOT_IN_SERVER)
-    return Scope(choice.value)
 
 
 # --- option parsing ----------------------------------------------------------------------
@@ -132,6 +111,13 @@ def parse_id(value: str, message: str = PICK_FROM_LIST) -> int:
     if not text.isdigit():
         raise InvalidOperation(message)
     return int(text)
+
+
+def parse_list_id(value: str | None) -> int | None:
+    """The `list` option (autocomplete, value = list id); None when not given."""
+    if value is None or not value.strip():
+        return None
+    return parse_id(value, PICK_A_LIST)
 
 
 def user_ids(users: Iterable[discord.abc.User | None]) -> list[int] | None:
@@ -188,14 +174,8 @@ async def apply[T](interaction: discord.Interaction, outcome: Outcome[T]) -> T:
 
 
 async def collect_notes(uow: Uow, user_id: int) -> list[str]:
-    """One-line notes shown once before a command's reply (D25, D26)."""
+    """One-line notes shown once before a command's reply (D25)."""
     notes: list[str] = []
-    failed_at = await user_settings.consume_dm_failure(uow, user_id)
-    if failed_at is not None:
-        notes.append(
-            f"⚠️ A personal reminder couldn't be sent to you by DM ({ts(failed_at, 'R')}). "
-            "Share a server with Sidequest and allow DMs from its members."
-        )
     if await user_settings.consume_tz_hint(uow, user_id):
         notes.append(
             f"ℹ️ Times use {uow.default_timezone} until you set your timezone with "

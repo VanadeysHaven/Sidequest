@@ -4,23 +4,24 @@ import discord
 
 from sidequest.bot import adapter, render
 from sidequest.bot.views.base import BaseView
-from sidequest.core.enums import Scope
 from sidequest.services import todos
 from sidequest.services.dto import ListFilter, Page, TodoView
 
 
-class ListView(BaseView):
-    """Prev/Next over a to-do list. A public list (owner_id None) can be paged by anyone."""
+class ListPageView(BaseView):
+    """Prev/Next over one list. A public list (owner_id None) can be paged by anyone."""
 
     def __init__(
         self,
         owner_id: int | None,
-        scope: Scope,
+        list_id: int,
+        list_name: str,
         filter: ListFilter,
         page: Page[TodoView],
     ) -> None:
         super().__init__(owner_id)
-        self.scope = scope
+        self.list_id = list_id
+        self.list_name = list_name
         self.filter = filter
         self.page_number = page.page
         self._update_buttons(page)
@@ -33,11 +34,11 @@ class ListView(BaseView):
         await interaction.response.defer()
         actor = adapter.actor_from(interaction)
         async with adapter.uows(interaction)() as uow:
-            page = await todos.list_todos(uow, actor, self.scope, self.filter, page=number)
+            page = await todos.list_todos(uow, actor, self.list_id, self.filter, page=number)
         self.page_number = page.page
         self._update_buttons(page)
         await interaction.edit_original_response(
-            embed=render.list_embed(page, self.scope, self.filter), view=self
+            embed=render.list_embed(page, self.list_name, self.filter), view=self
         )
 
     @discord.ui.button(label="◀ Prev", style=discord.ButtonStyle.secondary)

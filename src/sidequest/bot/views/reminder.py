@@ -47,12 +47,16 @@ def reminder_actor(interaction: discord.Interaction) -> Actor:
 
     Unlike `adapter.actor_from`, the guild comes straight from the interaction: only the
     bot posts reminder messages, so a reminder in a server proves the bot is installed
-    there (and a component interaction may not carry the guild install owner).
+    there (and a component interaction may not carry the guild install owner). Manage
+    Server counts: it may check off on any list (D50). A non-collaborator gets the
+    service's `Forbidden` and the reminder stays.
     """
+    perms = interaction.permissions
+    guild_id = interaction.guild_id
     return Actor(
         user_id=interaction.user.id,
-        guild_id=interaction.guild_id,
-        can_manage_guild=False,  # not needed: anyone who sees it may check off / tick (D3)
+        guild_id=guild_id,
+        can_manage_guild=guild_id is not None and (perms.manage_guild or perms.administrator),
         origin="discord",
     )
 

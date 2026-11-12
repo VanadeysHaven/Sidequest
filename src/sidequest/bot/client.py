@@ -14,6 +14,7 @@ from discord import app_commands
 
 from sidequest.bot.adapter import BotDeps, DbCommandHashStore
 from sidequest.bot.commands.about import SidequestGroup
+from sidequest.bot.commands.lists import build_lists_group
 from sidequest.bot.commands.settings import build_settings_group
 from sidequest.bot.commands.todo import build_todo_group
 from sidequest.bot.errors import report_error
@@ -62,6 +63,7 @@ class SidequestClient(discord.Client):
     async def setup_hook(self) -> None:
         self.tree.add_command(SidequestGroup(self.settings, self.started_at))
         self.tree.add_command(build_todo_group())
+        self.tree.add_command(build_lists_group())
         self.tree.add_command(build_settings_group())
         # Reminder buttons/selects: matched by custom_id, so they survive restarts.
         self.add_dynamic_items(DoneButton, SubtaskSelect)
@@ -120,10 +122,11 @@ class SidequestClient(discord.Client):
         """Register commands with Discord (D32). Never both global and guild copies: a guild
         that has both shows every command twice.
 
-        - SYNC_GLOBAL=true: global commands (every server, DMs, user installs). Guilds in
-          SYNC_GUILD_IDS get their guild commands deleted, cleaning up after server-only mode.
+        - SYNC_GLOBAL=true: global commands (every server the bot is installed in; there
+          are no DM or user-install commands, D40). Guilds in SYNC_GUILD_IDS get their guild
+          commands deleted, cleaning up after server-only mode.
         - SYNC_GLOBAL=false: server-only mode for a dev bot. Commands go to SYNC_GUILD_IDS
-          (instant) and the global commands are cleared, so DMs/user installs have none.
+          (instant) and the global commands are cleared.
 
         The global sync is skipped when the hash of the global payload matches the one stored
         in app_meta `command_hash`, so it only runs when the global commands change.

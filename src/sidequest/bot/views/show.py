@@ -22,7 +22,8 @@ class ShowView(BaseView):
         self.clear_items()
         if todo.status != TodoStatus.OPEN:
             return
-        pages = render.subtask_option_pages(todo)
+        # D50: no Done or subtask ticking for someone who may not check it off.
+        pages = render.subtask_option_pages(todo) if todo.can_complete else []
         for row, options in enumerate(pages):
             first = row * SELECT_OPTIONS_MAX + 1
             placeholder = (
@@ -40,11 +41,12 @@ class ShowView(BaseView):
             select.callback = self._ticked(select)  # type: ignore[method-assign]
             self.add_item(select)
 
-        done: discord.ui.Button[ShowView] = discord.ui.Button(
-            label="Done", style=discord.ButtonStyle.success, row=2
-        )
-        done.callback = self._done  # type: ignore[method-assign]
-        self.add_item(done)
+        if todo.can_complete:
+            done: discord.ui.Button[ShowView] = discord.ui.Button(
+                label="Done", style=discord.ButtonStyle.success, row=2
+            )
+            done.callback = self._done  # type: ignore[method-assign]
+            self.add_item(done)
         if todo.can_edit:
             edit: discord.ui.Button[ShowView] = discord.ui.Button(
                 label="Edit details", style=discord.ButtonStyle.secondary, row=2

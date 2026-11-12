@@ -4,15 +4,18 @@ from collections.abc import Iterable, Sequence
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import ColumnElement, Select, and_, false, or_, select
+from sqlalchemy import ColumnElement, Select, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.strategy_options import _AbstractLoad
 
 from sidequest.core import recurrence
-from sidequest.core.enums import OccurrenceStatus, Scope, TodoKind, TodoStatus
-from sidequest.core.errors import Forbidden, InvalidOperation, LimitExceeded, NotFound
+from sidequest.core.enums import OccurrenceStatus, TodoKind, TodoStatus
+from sidequest.core.errors import Forbidden, InvalidOperation, LimitExceeded, NameTaken, NotFound
 from sidequest.core.limits import DETAILS_MAX, TITLE_MAX
+from sidequest.core.text import bold
 from sidequest.core.tz import get_zone
-from sidequest.db.models import GuildSettings, Occurrence, Todo, UserSettings
+from sidequest.db.models import GuildSettings, Occurrence, Todo, TodoList, UserSettings
 from sidequest.services import permissions
 from sidequest.services.actor import Actor
 from sidequest.services.dto import OccurrenceView, SubtaskView, TodoView
@@ -21,6 +24,16 @@ from sidequest.services.uow import Uow
 
 OPEN_OCCURRENCE = (OccurrenceStatus.PENDING, OccurrenceStatus.SENT)
 NOT_FOUND = "That to-do doesn't exist (or isn't on a list you can see here)."
+NOT_IN_GUILD = "Sidequest only works in a server where it's installed."
+TITLE_INDEX = "uq_todos_list_id_open_title"
+
+
+def require_guild(actor: Actor) -> int:
+    """The actor's server. Sidequest has no lists outside servers (D40)."""
+    if actor.guild_id is None:
+        raise InvalidOperation(NOT_IN_GUILD)
+    return actor.guild_id
+
 
 # --- validation --------------------------------------------------------------------------
 
@@ -70,31 +83,29 @@ async def reminder_channel(uow: Uow, guild_id: int) -> int | None:
     )
 
 
-def visible(actor: Actor, scope: Scope | None) -> ColumnElement[bool]:
-    """SQL filter for the to-dos the actor sees in `scope` (None: both lists)."""
-    server = (
-        and_(Todo.scope == Scope.SERVER, Todo.guild_id == actor.guild_id)
-        if actor.guild_id is not None
-        else false()
-    )
-    personal = and_(Todo.scope == Scope.PERSONAL, Todo.owner_id == actor.user_id)
-    if scope == Scope.SERVER:
-        if actor.guild_id is None:
-            raise InvalidOperation("The server list is only available in a server.")
-        return server
-    if scope == Scope.PERSONAL:
-        return personal
-    return or_(server, personal)
+def visible(actor: Actor) -> ColumnElement[bool]:
+    """SQL filter for the to-dos the actor sees: every list of their server."""
+    return Todo.guild_id == require_guild(actor)
 
 
 # --- loading -----------------------------------------------------------------------------
+
+
+def todo_load() -> tuple[_AbstractLoad, ...]:
+    """Loader options for building a `TodoView`: assignees, subtasks, and the list with
+    its collaborators (permissions depend on them)."""
+    return (
+        selectinload(Todo.assignees),
+        selectinload(Todo.subtasks),
+        selectinload(Todo.list).selectinload(TodoList.collaborators),
+    )
 
 
 def _todo_query(todo_id: int) -> Select[tuple[Todo]]:
     return (
         select(Todo)
         .where(Todo.id == todo_id)
-        .options(selectinload(Todo.assignees), selectinload(Todo.subtasks))
+        .options(*todo_load())
         .execution_options(populate_existing=True)
     )
 
@@ -124,11 +135,61 @@ def require_open(todo: Todo) -> None:
         raise NotFound(NOT_FOUND)
 
 
+def add_forbidden(lst: TodoList) -> Forbidden:
+    return Forbidden(f"Only the owner and collaborators of {bold(lst.name)} can add to-dos to it.")
+
+
+def require_add(actor: Actor, lst: TodoList) -> None:
+    """D50: adding to (or moving onto) an owned list. Needs `lst.collaborators` loaded."""
+    if not permissions.can_add(actor, lst):
+        raise add_forbidden(lst)
+
+
 def require_edit(actor: Actor, todo: Todo) -> None:
-    if not permissions.can_edit(actor, todo, assignee_ids(todo)):
+    if not permissions.can_edit(actor, todo.list):
         raise Forbidden(
-            "Only the creator, an assignee or someone with Manage Server can change this to-do."
+            f"Only the owner and collaborators of {bold(todo.list.name)} "
+            "(or someone with Manage Server) can change its to-dos."
         )
+
+
+def require_complete(actor: Actor, todo: Todo) -> None:
+    if not permissions.can_complete(actor, todo.list):
+        raise Forbidden(
+            f"Only the owner and collaborators of {bold(todo.list.name)} can check this off."
+        )
+
+
+def title_taken(title: str, list_name: str) -> NameTaken:
+    return NameTaken(
+        f"{bold(title)} is already on {bold(list_name)} (open to-dos need unique names)."
+    )
+
+
+async def require_unique_title(
+    uow: Uow, lst: TodoList, title: str, exclude_todo_id: int | None = None
+) -> None:
+    """D44: open titles are unique per list, case-insensitive."""
+    stmt = select(Todo.id).where(
+        Todo.list_id == lst.id,
+        Todo.status == TodoStatus.OPEN,
+        func.lower(Todo.title) == title.lower(),
+    )
+    if exclude_todo_id is not None:
+        stmt = stmt.where(Todo.id != exclude_todo_id)
+    if await uow.session.scalar(stmt.limit(1)) is not None:
+        raise title_taken(title, lst.name)
+
+
+async def flush_titles(uow: Uow, title: str, list_name: str) -> None:
+    """Flush; a concurrent duplicate title (unique index) becomes `NameTaken`."""
+    try:
+        await uow.session.flush()
+    except IntegrityError as exc:
+        await uow.session.rollback()
+        if TITLE_INDEX in str(exc.orig):
+            raise title_taken(title, list_name) from None
+        raise
 
 
 async def open_occurrences(uow: Uow, todo_ids: Iterable[int]) -> dict[int, list[Occurrence]]:
@@ -149,6 +210,21 @@ async def open_occurrences(uow: Uow, todo_ids: Iterable[int]) -> dict[int, list[
 
 def find(occurrences: Sequence[Occurrence], status: OccurrenceStatus) -> Occurrence | None:
     return next((o for o in occurrences if o.status == status), None)
+
+
+async def cancel_open(uow: Uow, todo: Todo, *, include_sent: bool) -> tuple[list[Effect], bool]:
+    """Cancel the pending (and optionally the sent) occurrence. (effects, had_pending)."""
+    now = uow.clock.now()
+    effects: list[Effect] = []
+    had_pending = False
+    for occ in (await open_occurrences(uow, [todo.id]))[todo.id]:
+        if occ.status == OccurrenceStatus.PENDING:
+            had_pending = True
+        elif not include_sent:
+            continue
+        effects += close(occ, OccurrenceStatus.CANCELLED, now)
+    await uow.session.flush()
+    return effects, had_pending
 
 
 # --- scheduling --------------------------------------------------------------------------
@@ -215,8 +291,9 @@ def todo_view(actor: Actor, todo: Todo, occurrences: Sequence[Occurrence]) -> To
     assignees = assignee_ids(todo)
     return TodoView(
         id=todo.id,
-        scope=todo.scope,
         guild_id=todo.guild_id,
+        list_id=todo.list_id,
+        list_name=todo.list.name,
         owner_id=todo.owner_id,
         title=todo.title,
         details=todo.details,
@@ -229,7 +306,7 @@ def todo_view(actor: Actor, todo: Todo, occurrences: Sequence[Occurrence]) -> To
         next_due_at=pending.due_at if pending else None,
         pending_occurrence_id=pending.id if pending else None,
         reminder=occurrence_view(sent) if sent else None,
-        assignee_ids=assignees if todo.scope == Scope.SERVER else (),
+        assignee_ids=assignees,
         subtasks=tuple(
             SubtaskView(
                 id=s.id,
@@ -244,7 +321,8 @@ def todo_view(actor: Actor, todo: Todo, occurrences: Sequence[Occurrence]) -> To
         created_at=todo.created_at,
         completed_at=todo.completed_at,
         completed_by=todo.completed_by,
-        can_edit=permissions.can_edit(actor, todo, assignees),
+        can_edit=permissions.can_edit(actor, todo.list),
+        can_complete=permissions.can_complete(actor, todo.list),
     )
 
 

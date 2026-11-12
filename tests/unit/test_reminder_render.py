@@ -7,7 +7,7 @@ import discord
 
 from sidequest.bot import render
 from sidequest.bot.views.reminder import reminder_view
-from sidequest.core.enums import OccurrenceStatus, Scope, TodoKind, TodoStatus
+from sidequest.core.enums import OccurrenceStatus, TodoKind, TodoStatus
 from sidequest.core.recurrence import DailyRule, describe
 from sidequest.services.dto import OccurrenceView, SubtaskView, TodoView
 
@@ -17,8 +17,9 @@ START = datetime(2030, 1, 7, 9, 0, tzinfo=UTC)
 def make_todo(**overrides: object) -> TodoView:
     defaults: dict[str, object] = {
         "id": 1,
-        "scope": Scope.PERSONAL,
-        "guild_id": None,
+        "guild_id": 5,
+        "list_id": 1,
+        "list_name": "Groceries",
         "owner_id": 10,
         "title": "Buy milk",
         "details": None,
@@ -37,6 +38,7 @@ def make_todo(**overrides: object) -> TodoView:
         "completed_at": None,
         "completed_by": None,
         "can_edit": True,
+        "can_complete": True,
     }
     return TodoView(**{**defaults, **overrides})
 
@@ -70,14 +72,22 @@ def _fields(embed: discord.Embed) -> list[tuple[str, str]]:
 # --- reminder_pings ----------------------------------------------------------------------
 
 
-def test_server_reminder_pings_every_assignee() -> None:
-    todo = make_todo(scope=Scope.SERVER, guild_id=5, assignee_ids=(1, 2))
+def test_reminder_pings_every_assignee() -> None:
+    todo = make_todo(assignee_ids=(1, 2))
     assert render.reminder_pings(todo) == "<@1> <@2>"
 
 
-def test_personal_reminder_has_no_pings() -> None:
-    todo = make_todo(scope=Scope.PERSONAL, assignee_ids=())
+def test_reminder_without_assignees_has_no_pings() -> None:
+    todo = make_todo(assignee_ids=())
     assert render.reminder_pings(todo) is None
+
+
+# --- reminder_embed footer ---------------------------------------------------------------
+
+
+def test_reminder_footer_names_the_list() -> None:
+    e = render.reminder_embed(make_todo(), make_occurrence())
+    assert e.footer.text == "Groceries · press Done when it's done"
 
 
 # --- reminder_embed ----------------------------------------------------------------------

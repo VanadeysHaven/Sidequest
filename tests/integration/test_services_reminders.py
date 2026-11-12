@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from sidequest.core.enums import OccurrenceStatus, Scope
+from sidequest.core.enums import OccurrenceStatus
 from sidequest.core.errors import InvalidOperation
 from sidequest.core.recurrence import DailyRule
 from sidequest.db.models import Occurrence
@@ -38,7 +38,6 @@ async def _daily_todo(uow: Uow) -> tuple[int, int]:
     out = await todos.create_recurring(
         uow,
         actor,
-        scope=Scope.SERVER,
         title="stretch",
         rule=DailyRule(times=["08:00"]),
     )

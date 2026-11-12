@@ -5,17 +5,16 @@ from datetime import UTC, datetime, time
 import pytest
 from sqlalchemy import select
 
-from sidequest.core.enums import OccurrenceStatus, Scope, TodoStatus
+from sidequest.core.enums import OccurrenceStatus, TodoStatus
 from sidequest.core.errors import (
     Forbidden,
-    InvalidOperation,
     LimitExceeded,
     NotFound,
     ReminderChannelNotSet,
 )
 from sidequest.core.recurrence import DailyRule
 from sidequest.db.models import Occurrence
-from sidequest.services import occurrences, settings, todos
+from sidequest.services import lists, occurrences, settings, todos
 from sidequest.services.actor import Actor
 from sidequest.services.dto import DueInput, TodoPatch
 from sidequest.services.effects import DeleteMessage
@@ -28,6 +27,7 @@ OWNER = 1
 OTHER = 2
 MANAGER = 9
 CHANNEL = 555
+DEFAULT_LIST = "Default List"
 
 
 def member(user_id: int, guild_id: int | None, manage: bool = False) -> Actor:
@@ -54,7 +54,6 @@ async def test_timed_once_todo_has_one_pending_occurrence_at_due_time(uow: Uow) 
     out = await todos.create_once(
         uow,
         member(OWNER, GUILD_A),
-        scope=Scope.SERVER,
         title="x",
         due=DueInput(time=time(10, 0)),
     )
@@ -64,7 +63,7 @@ async def test_timed_once_todo_has_one_pending_occurrence_at_due_time(uow: Uow) 
 
 
 async def test_untimed_once_todo_has_no_occurrences(uow: Uow) -> None:
-    out = await todos.create_once(uow, member(OWNER, GUILD_A), scope=Scope.SERVER, title="x")
+    out = await todos.create_once(uow, member(OWNER, GUILD_A), title="x")
     assert out.changed_schedule is False
     assert await _occurrences(uow, out.value.id) == []
 
@@ -74,7 +73,6 @@ async def test_server_timed_once_without_reminder_channel_is_rejected(uow: Uow) 
         await todos.create_once(
             uow,
             member(OWNER, GUILD_A),
-            scope=Scope.SERVER,
             title="x",
             due=DueInput(time=time(10, 0)),
         )
@@ -85,23 +83,13 @@ async def test_server_recurring_without_reminder_channel_is_rejected(uow: Uow) -
         await todos.create_recurring(
             uow,
             member(OWNER, GUILD_A),
-            scope=Scope.SERVER,
             title="x",
             rule=DailyRule(times=["08:00"]),
         )
 
 
-async def test_personal_todo_hidden_from_others_but_seen_in_any_context(uow: Uow) -> None:
-    out = await todos.create_once(uow, member(OWNER, GUILD_A), scope=Scope.PERSONAL, title="mine")
-    tid = out.value.id
-    with pytest.raises(NotFound):
-        await todos.get(uow, member(OTHER, GUILD_A), tid)
-    assert (await todos.get(uow, member(OWNER, GUILD_B), tid)).id == tid
-    assert (await todos.get(uow, member(OWNER, None), tid)).id == tid
-
-
 async def test_server_todo_is_not_visible_from_another_guild(uow: Uow) -> None:
-    out = await todos.create_once(uow, member(OWNER, GUILD_A), scope=Scope.SERVER, title="x")
+    out = await todos.create_once(uow, member(OWNER, GUILD_A), title="x")
     tid = out.value.id
     with pytest.raises(NotFound):
         await todos.get(uow, member(OWNER, GUILD_B), tid)
@@ -111,9 +99,7 @@ async def test_server_todo_is_not_visible_from_another_guild(uow: Uow) -> None:
 async def test_completing_pending_once_todo_early_closes_occurrence(uow: Uow) -> None:
     await _set_channel(uow)
     actor = member(OWNER, GUILD_A)
-    out = await todos.create_once(
-        uow, actor, scope=Scope.SERVER, title="x", due=DueInput(time=time(10, 0))
-    )
+    out = await todos.create_once(uow, actor, title="x", due=DueInput(time=time(10, 0)))
     tid = out.value.id
     done = await todos.complete(uow, actor, tid)
     assert done.effects == []
@@ -127,9 +113,7 @@ async def test_edit_time_of_sent_reminder_cancels_it_and_schedules_new_one(
 ) -> None:
     await _set_channel(uow)
     actor = member(OWNER, GUILD_A)
-    out = await todos.create_once(
-        uow, actor, scope=Scope.SERVER, title="x", due=DueInput(time=time(10, 0))
-    )
+    out = await todos.create_once(uow, actor, title="x", due=DueInput(time=time(10, 0)))
     tid = out.value.id
     clock.set(utc(7, 10))
     reminders = await occurrences.claim_due(uow, clock.now())
@@ -151,9 +135,7 @@ async def test_delete_with_sent_reminder_cancels_and_deletes_message(
 ) -> None:
     await _set_channel(uow)
     actor = member(OWNER, GUILD_A)
-    out = await todos.create_once(
-        uow, actor, scope=Scope.SERVER, title="x", due=DueInput(time=time(10, 0))
-    )
+    out = await todos.create_once(uow, actor, title="x", due=DueInput(time=time(10, 0)))
     tid = out.value.id
     clock.set(utc(7, 10))
     reminders = await occurrences.claim_due(uow, clock.now())
@@ -167,27 +149,14 @@ async def test_delete_with_sent_reminder_cancels_and_deletes_message(
         await todos.get(uow, actor, tid)
 
 
-async def test_non_creator_cannot_edit_but_may_complete(uow: Uow) -> None:
-    await _set_channel(uow)
-    out = await todos.create_once(uow, member(OWNER, GUILD_A), scope=Scope.SERVER, title="x")
-    tid = out.value.id
-    other = member(OTHER, GUILD_A)
-    with pytest.raises(Forbidden):
-        await todos.edit(uow, other, tid, TodoPatch(title="renamed"))
-    done = await todos.complete(uow, other, tid)
-    assert done.value.status == TodoStatus.DONE
-
-
 async def test_title_over_200_characters_is_rejected(uow: Uow) -> None:
     with pytest.raises(LimitExceeded):
-        await todos.create_once(uow, member(OWNER, GUILD_A), scope=Scope.PERSONAL, title="a" * 201)
+        await todos.create_once(uow, member(OWNER, GUILD_A), title="a" * 201)
 
 
 async def test_details_over_4000_characters_are_rejected(uow: Uow) -> None:
     with pytest.raises(LimitExceeded):
-        await todos.create_once(
-            uow, member(OWNER, GUILD_A), scope=Scope.PERSONAL, title="x", details="d" * 4001
-        )
+        await todos.create_once(uow, member(OWNER, GUILD_A), title="x", details="d" * 4001)
 
 
 async def test_more_than_10_assignees_are_rejected(uow: Uow) -> None:
@@ -195,43 +164,22 @@ async def test_more_than_10_assignees_are_rejected(uow: Uow) -> None:
         await todos.create_once(
             uow,
             member(OWNER, GUILD_A),
-            scope=Scope.SERVER,
             title="x",
             assignee_ids=list(range(1, 12)),
         )
 
 
-async def test_assignees_on_personal_todo_are_rejected_on_create(uow: Uow) -> None:
-    with pytest.raises(InvalidOperation):
-        await todos.create_once(
-            uow,
-            member(OWNER, GUILD_A),
-            scope=Scope.PERSONAL,
-            title="x",
-            assignee_ids=[OTHER],
-        )
-
-
-async def test_assignees_on_personal_todo_are_rejected_by_set_assignees(uow: Uow) -> None:
-    actor = member(OWNER, GUILD_A)
-    out = await todos.create_once(uow, actor, scope=Scope.PERSONAL, title="x")
-    with pytest.raises(InvalidOperation):
-        await todos.set_assignees(uow, actor, out.value.id, [OTHER])
-
-
 async def test_new_todo_timezone_follows_user_setting_and_override_wins(uow: Uow) -> None:
     actor = member(OWNER, GUILD_A)
-    default = await todos.create_once(uow, actor, scope=Scope.PERSONAL, title="a")
+    default = await todos.create_once(uow, actor, title="a")
     assert default.value.timezone == "UTC"
     assert await settings.get_user_timezone(uow, OWNER) == ("UTC", True)
 
     assert await settings.set_user_timezone(uow, actor, "europe/amsterdam") == "Europe/Amsterdam"
-    own = await todos.create_once(uow, actor, scope=Scope.PERSONAL, title="b")
+    own = await todos.create_once(uow, actor, title="b")
     assert own.value.timezone == "Europe/Amsterdam"
 
-    override = await todos.create_once(
-        uow, actor, scope=Scope.PERSONAL, title="c", timezone="Asia/Tokyo"
-    )
+    override = await todos.create_once(uow, actor, title="c", timezone="Asia/Tokyo")
     assert override.value.timezone == "Asia/Tokyo"
 
 
@@ -242,7 +190,7 @@ async def test_tz_hint_is_shown_exactly_once(uow: Uow) -> None:
 
 async def test_edit_keeps_details_unless_passed_and_none_clears_them(uow: Uow) -> None:
     actor = member(OWNER, GUILD_A)
-    out = await todos.create_once(uow, actor, scope=Scope.PERSONAL, title="x", details="notes")
+    out = await todos.create_once(uow, actor, title="x", details="notes")
     tid = out.value.id
 
     renamed = await todos.edit(uow, actor, tid, TodoPatch(title="y"))
@@ -253,16 +201,53 @@ async def test_edit_keeps_details_unless_passed_and_none_clears_them(uow: Uow) -
     assert cleared.value.details is None
 
 
-async def test_autocomplete_returns_scope_and_prefix_matches_first(uow: Uow) -> None:
+async def test_non_collaborator_cannot_edit_or_complete_on_owned_list(uow: Uow) -> None:
+    owner = member(OWNER, GUILD_A)
+    lst = await lists.create(uow, owner, "Owned")
+    out = await todos.create_once(uow, owner, list_id=lst.id, title="x")
+    tid = out.value.id
+    other = member(OTHER, GUILD_A)
+    with pytest.raises(Forbidden):
+        await todos.edit(uow, other, tid, TodoPatch(title="renamed"))
+    with pytest.raises(Forbidden):
+        await todos.complete(uow, other, tid)
+
+
+async def test_collaborator_may_edit_and_complete_on_owned_list(uow: Uow) -> None:
+    owner = member(OWNER, GUILD_A)
+    lst = await lists.create(uow, owner, "Owned")
+    await lists.set_collaborators(uow, owner, lst.id, [OTHER])
+    out = await todos.create_once(uow, owner, list_id=lst.id, title="x")
+    tid = out.value.id
+    other = member(OTHER, GUILD_A)
+    renamed = await todos.edit(uow, other, tid, TodoPatch(title="renamed"))
+    assert renamed.value.title == "renamed"
+    done = await todos.complete(uow, other, tid)
+    assert done.value.status == TodoStatus.DONE
+
+
+async def test_any_member_may_edit_and_complete_on_default_list(uow: Uow) -> None:
+    out = await todos.create_once(uow, member(OWNER, GUILD_A), title="x")
+    tid = out.value.id
+    other = member(OTHER, GUILD_A)
+    renamed = await todos.edit(uow, other, tid, TodoPatch(title="renamed"))
+    assert renamed.value.title == "renamed"
+    done = await todos.complete(uow, other, tid)
+    assert done.value.status == TodoStatus.DONE
+
+
+async def test_autocomplete_returns_list_name_and_prefix_matches_first(uow: Uow) -> None:
     actor = member(OWNER, GUILD_A)
-    await todos.create_once(uow, actor, scope=Scope.SERVER, title="buy milk")
-    await todos.create_once(uow, actor, scope=Scope.PERSONAL, title="milk the cow")
-    await todos.create_once(uow, member(OTHER, GUILD_A), scope=Scope.PERSONAL, title="milk")
+    await todos.create_once(uow, actor, title="buy milk")
+    await todos.create_once(uow, actor, title="milk the cow")
+    await todos.create_once(uow, member(OTHER, GUILD_A), title="milk")
 
     found = await todos.autocomplete(uow, actor, "milk")
 
-    assert [(title, scope) for _, title, scope in found] == [
-        ("milk the cow", Scope.PERSONAL),
-        ("buy milk", Scope.SERVER),
+    assert [(title, list_name) for _, title, list_name in found] == [
+        ("milk", DEFAULT_LIST),
+        ("milk the cow", DEFAULT_LIST),
+        ("buy milk", DEFAULT_LIST),
     ]
-    assert await todos.autocomplete(uow, member(OWNER, None), "milk", Scope.SERVER) == []
+    assert await todos.autocomplete(uow, member(OWNER, None), "milk") == []
+    assert await todos.autocomplete(uow, member(OWNER, GUILD_B), "milk") == []

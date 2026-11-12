@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from sidequest.core.enums import OccurrenceStatus, Scope, TodoStatus
+from sidequest.core.enums import OccurrenceStatus, TodoStatus
 from sidequest.core.errors import InvalidOperation
 from sidequest.core.recurrence import DailyRule
 from sidequest.db.models import Occurrence
@@ -48,7 +48,6 @@ async def _daily_todo(uow: Uow) -> int:
     out = await todos.create_recurring(
         uow,
         member(OWNER, GUILD_A),
-        scope=Scope.SERVER,
         title="stretch",
         rule=DailyRule(times=["08:00"]),
     )
@@ -60,7 +59,6 @@ async def test_once_todo_fires_only_once(uow: Uow, clock: FixedClock) -> None:
     out = await todos.create_once(
         uow,
         member(OWNER, GUILD_A),
-        scope=Scope.SERVER,
         title="x",
         due=DueInput(time=time(10, 0)),
     )
@@ -118,15 +116,15 @@ async def test_outage_yields_one_late_reminder_and_next_is_in_future(
 async def test_concurrent_claims_split_due_reminders(
     committed_sessions: async_sessionmaker[AsyncSession], clock: FixedClock
 ) -> None:
-    actor = member(OWNER, None)
+    actor = member(OWNER, GUILD_A)
     pending_ids: list[int] = []
     async with committed_sessions() as session:
         uow = Uow(session, clock)
+        await _set_channel(uow)
         for i in range(10):
             out = await todos.create_once(
                 uow,
                 actor,
-                scope=Scope.PERSONAL,
                 title=f"due {i}",
                 due=DueInput(time=time(9, 30)),
             )
@@ -148,9 +146,7 @@ async def test_concurrent_claims_split_due_reminders(
 async def test_completing_an_already_done_occurrence_is_invalid(uow: Uow) -> None:
     await _set_channel(uow)
     actor = member(OWNER, GUILD_A)
-    out = await todos.create_once(
-        uow, actor, scope=Scope.SERVER, title="x", due=DueInput(time=time(10, 0))
-    )
+    out = await todos.create_once(uow, actor, title="x", due=DueInput(time=time(10, 0)))
     occ_id = out.value.pending_occurrence_id
     assert occ_id is not None
     done = await occurrences.complete_occurrence(uow, actor, occ_id)

@@ -1,12 +1,12 @@
-"""To-do operations: create, read, list, edit, assign, complete, delete, autocomplete."""
+"""To-do operations: create, read, list, edit, assign, move, complete, delete, autocomplete."""
 
 from collections.abc import Sequence
 
 from sqlalchemy import and_, case, func, or_, select
-from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.orm import aliased
 
 from sidequest.core import recurrence
-from sidequest.core.enums import OccurrenceStatus, Scope, TodoKind, TodoStatus
+from sidequest.core.enums import OccurrenceStatus, TodoKind, TodoStatus
 from sidequest.core.errors import (
     InvalidOperation,
     LimitExceeded,
@@ -15,11 +15,12 @@ from sidequest.core.errors import (
 )
 from sidequest.core.limits import ASSIGNEES_MAX
 from sidequest.core.recurrence import RecurrenceRule
+from sidequest.core.text import bold
 from sidequest.core.timeparse import Timed, resolve_due
 from sidequest.core.tz import get_zone
-from sidequest.db.models import Occurrence, Todo, TodoAssignee
+from sidequest.db.models import Occurrence, Todo, TodoAssignee, TodoList
 from sidequest.services import _common as c
-from sidequest.services import permissions
+from sidequest.services import lists
 from sidequest.services.actor import Actor
 from sidequest.services.dto import DueInput, ListFilter, Page, TodoPatch, TodoView
 from sidequest.services.effects import Effect, Outcome
@@ -37,50 +38,47 @@ UNTIMED = DueInput()
 # --- create ------------------------------------------------------------------------------
 
 
-def _check_scope(actor: Actor, scope: Scope) -> None:
-    if not permissions.can_create(actor, scope):
-        raise InvalidOperation("Server to-dos can only be added in a server.")
-
-
-def _clean_assignees(actor: Actor, scope: Scope, user_ids: Sequence[int] | None) -> list[int]:
-    if scope == Scope.PERSONAL:
-        if user_ids:
-            raise InvalidOperation("Personal to-dos can't have assignees.")
-        return []
+def _clean_assignees(actor: Actor, user_ids: Sequence[int] | None) -> list[int]:
     if user_ids is None:
         return [actor.user_id]
     unique = list(dict.fromkeys(user_ids))
     if not unique:
-        raise InvalidOperation("A server to-do needs at least one assignee.")
+        raise InvalidOperation("A to-do needs at least one assignee.")
     if len(unique) > ASSIGNEES_MAX:
         raise LimitExceeded(f"A to-do can have at most {ASSIGNEES_MAX} assignees.")
     return unique
 
 
-async def _require_channel(uow: Uow, todo_scope: Scope, guild_id: int | None) -> None:
-    if (
-        todo_scope == Scope.SERVER
-        and guild_id is not None
-        and await c.reminder_channel(uow, guild_id) is None
-    ):
+async def _require_channel(uow: Uow, guild_id: int) -> None:
+    if await c.reminder_channel(uow, guild_id) is None:
         raise ReminderChannelNotSet(NO_CHANNEL)
 
 
-def _new_todo(
+async def _target_list(uow: Uow, actor: Actor, list_id: int | None) -> TodoList:
+    """The list a new to-do goes on (D45) and the add check (D50, D53: a default the
+    actor can no longer add to is refused by name, not silently replaced)."""
+    lst = await lists.resolve(uow, actor, list_id)
+    c.require_add(actor, lst)
+    return lst
+
+
+async def _new_todo(
+    uow: Uow,
     actor: Actor,
-    scope: Scope,
+    lst: TodoList,
     kind: TodoKind,
     title: str,
     details: str | None,
     timezone: str,
     assignee_ids: Sequence[int] | None,
 ) -> Todo:
-    assignees = _clean_assignees(actor, scope, assignee_ids)
+    assignees = _clean_assignees(actor, assignee_ids)
+    title = c.clean_title(title)
+    await c.require_unique_title(uow, lst, title)
     return Todo(
-        scope=scope,
-        guild_id=actor.guild_id if scope == Scope.SERVER else None,
+        list=lst,
         owner_id=actor.user_id,
-        title=c.clean_title(title),
+        title=title,
         details=c.clean_details(details),
         kind=kind,
         timezone=timezone,
@@ -94,24 +92,25 @@ async def create_once(
     uow: Uow,
     actor: Actor,
     *,
-    scope: Scope,
+    list_id: int | None = None,
     title: str,
     details: str | None = None,
     due: DueInput = UNTIMED,
     timezone: str | None = None,
     assignee_ids: Sequence[int] | None = None,
 ) -> Outcome[TodoView]:
-    """One-time to-do: untimed, or timed (one pending occurrence at the due moment)."""
-    _check_scope(actor, scope)
+    """One-time to-do: untimed, or timed (one pending occurrence at the due moment).
+    `list_id` None: the actor's default list (D45)."""
+    lst = await _target_list(uow, actor, list_id)
     zone = await c.effective_zone(uow, actor, timezone)
     resolved = resolve_due(due.date, due.time, zone, uow.clock.now())
-    todo = _new_todo(actor, scope, TodoKind.ONCE, title, details, zone.key, assignee_ids)
+    todo = await _new_todo(uow, actor, lst, TodoKind.ONCE, title, details, zone.key, assignee_ids)
     timed = isinstance(resolved, Timed)
     if timed:
-        await _require_channel(uow, scope, todo.guild_id)
+        await _require_channel(uow, lst.guild_id)
         todo.due_at = resolved.at
     uow.session.add(todo)
-    await uow.session.flush()
+    await c.flush_titles(uow, todo.title, lst.name)
     if timed:
         c.add_pending(uow, todo, resolved.at)
     view = await c.view_of(uow, actor, todo)
@@ -123,7 +122,7 @@ async def create_recurring(
     uow: Uow,
     actor: Actor,
     *,
-    scope: Scope,
+    list_id: int | None = None,
     title: str,
     rule: RecurrenceRule,
     details: str | None = None,
@@ -131,13 +130,15 @@ async def create_recurring(
     assignee_ids: Sequence[int] | None = None,
 ) -> Outcome[TodoView]:
     """Repeating to-do with its first pending occurrence."""
-    _check_scope(actor, scope)
+    lst = await _target_list(uow, actor, list_id)
     zone = await c.effective_zone(uow, actor, timezone)
-    todo = _new_todo(actor, scope, TodoKind.RECURRING, title, details, zone.key, assignee_ids)
+    todo = await _new_todo(
+        uow, actor, lst, TodoKind.RECURRING, title, details, zone.key, assignee_ids
+    )
     todo.recurrence = recurrence.to_json(rule)
-    await _require_channel(uow, scope, todo.guild_id)
+    await _require_channel(uow, lst.guild_id)
     uow.session.add(todo)
-    await uow.session.flush()
+    await c.flush_titles(uow, todo.title, lst.name)
     c.add_next_pending(uow, todo, after=uow.clock.now())
     view = await c.view_of(uow, actor, todo)
     await uow.session.commit()
@@ -157,13 +158,15 @@ async def get(uow: Uow, actor: Actor, todo_id: int) -> TodoView:
 async def list_todos(
     uow: Uow,
     actor: Actor,
-    scope: Scope,
+    list_id: int | None,
     filter: ListFilter = "all",
     page: int = 0,
     page_size: int = 10,
 ) -> Page[TodoView]:
-    """Open to-dos: timed (incl. repeating) first by next due, then untimed by creation."""
-    where = [c.visible(actor, scope), Todo.status == TodoStatus.OPEN]
+    """Open to-dos of one list (None: the actor's default, D45/D49): timed (incl.
+    repeating) first by next due, then untimed by creation."""
+    lst = await lists.resolve(uow, actor, list_id)
+    where = [Todo.list_id == lst.id, Todo.status == TodoStatus.OPEN]
     if filter == "timed":
         where.append(or_(Todo.kind == TodoKind.RECURRING, Todo.due_at.is_not(None)))
     elif filter == "untimed":
@@ -181,7 +184,7 @@ async def list_todos(
                 and_(pending.todo_id == Todo.id, pending.status == OccurrenceStatus.PENDING),
             )
             .where(*where)
-            .options(selectinload(Todo.assignees), selectinload(Todo.subtasks))
+            .options(*c.todo_load())
             .order_by(next_due.is_(None), next_due, Todo.created_at, Todo.id)
             .offset(page * page_size)
             .limit(page_size)
@@ -189,22 +192,24 @@ async def list_todos(
     )
     occs = await c.open_occurrences(uow, [t.id for t in todos])
     items = [c.todo_view(actor, t, occs[t.id]) for t in todos]
+    await uow.session.commit()  # resolve may have created the server's fallback list
     return Page(items=items, page=page, page_size=page_size, total=total)
 
 
 async def autocomplete(
-    uow: Uow, actor: Actor, query: str, scope: Scope | None = None, limit: int = 25
-) -> list[tuple[int, str, Scope]]:
-    """(id, title, scope) of open to-dos whose title contains `query`; prefix matches first.
-
-    The adapter builds the label (and cuts it to its UI's limit)."""
+    uow: Uow, actor: Actor, query: str, limit: int = 25
+) -> list[tuple[int, str, str]]:
+    """(id, title, list name) of the server's open to-dos whose title contains `query`;
+    prefix matches first. The adapter builds the label (and cuts it to its UI's limit)."""
+    if actor.guild_id is None:
+        return []
     q = query.strip()
     escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    try:
-        visible = c.visible(actor, scope)
-    except InvalidOperation:
-        return []
-    stmt = select(Todo.id, Todo.title, Todo.scope).where(visible, Todo.status == TodoStatus.OPEN)
+    stmt = (
+        select(Todo.id, Todo.title, TodoList.name)
+        .join(TodoList, TodoList.id == Todo.list_id)
+        .where(c.visible(actor), Todo.status == TodoStatus.OPEN)
+    )
     if q:
         stmt = stmt.where(Todo.title.ilike(f"%{escaped}%", escape="\\"))
     stmt = stmt.order_by(
@@ -212,7 +217,7 @@ async def autocomplete(
         Todo.created_at.desc(),
         Todo.id.desc(),
     ).limit(limit)
-    return [(todo_id, title, Scope(s)) for todo_id, title, s in await uow.session.execute(stmt)]
+    return [(todo_id, title, name) for todo_id, title, name in await uow.session.execute(stmt)]
 
 
 # --- change ------------------------------------------------------------------------------
@@ -223,21 +228,6 @@ async def _load_for_edit(uow: Uow, actor: Actor, todo_id: int) -> Todo:
     c.require_open(todo)
     c.require_edit(actor, todo)
     return todo
-
-
-async def _cancel_open(uow: Uow, todo: Todo, *, include_sent: bool) -> tuple[list[Effect], bool]:
-    """Cancel the pending (and optionally the sent) occurrence. (effects, had_pending)."""
-    now = uow.clock.now()
-    effects: list[Effect] = []
-    had_pending = False
-    for occ in (await c.open_occurrences(uow, [todo.id]))[todo.id]:
-        if occ.status == OccurrenceStatus.PENDING:
-            had_pending = True
-        elif not include_sent:
-            continue
-        effects += c.close(occ, OccurrenceStatus.CANCELLED, now)
-    await uow.session.flush()
-    return effects, had_pending
 
 
 async def _retime_once(uow: Uow, todo: Todo, patch: TodoPatch) -> list[Effect]:
@@ -255,8 +245,8 @@ async def _retime_once(uow: Uow, todo: Todo, patch: TodoPatch) -> list[Effect]:
         resolved = None
     due_at = resolved.at if isinstance(resolved, Timed) else None
     if due_at is not None:  # validate everything before changing anything
-        await _require_channel(uow, todo.scope, todo.guild_id)
-    effects, _ = await _cancel_open(uow, todo, include_sent=True)
+        await _require_channel(uow, todo.guild_id)
+    effects, _ = await c.cancel_open(uow, todo, include_sent=True)
     todo.timezone = zone.key
     todo.due_at = due_at
     if due_at is not None:
@@ -272,7 +262,7 @@ async def _retime_recurring(uow: Uow, todo: Todo, patch: TodoPatch) -> None:
     if patch.rule is not None:
         todo.recurrence = recurrence.to_json(patch.rule)
     # The sent reminder (if any) stays: it is the current occurrence and can still be done.
-    await _cancel_open(uow, todo, include_sent=False)
+    await c.cancel_open(uow, todo, include_sent=False)
     c.add_next_pending(uow, todo, after=uow.clock.now())
 
 
@@ -281,7 +271,9 @@ async def edit(uow: Uow, actor: Actor, todo_id: int, patch: TodoPatch) -> Outcom
     one-time to-do an already-sent reminder is cancelled and its message deleted."""
     todo = await _load_for_edit(uow, actor, todo_id)
     if patch.title is not None:
-        todo.title = c.clean_title(patch.title)
+        title = c.clean_title(patch.title)
+        await c.require_unique_title(uow, todo.list, title, exclude_todo_id=todo.id)
+        todo.title = title
     if "details" in patch.model_fields_set:
         todo.details = c.clean_details(patch.details)
 
@@ -292,6 +284,7 @@ async def edit(uow: Uow, actor: Actor, todo_id: int, patch: TodoPatch) -> Outcom
             effects = await _retime_once(uow, todo, patch)
         else:
             await _retime_recurring(uow, todo, patch)
+    await c.flush_titles(uow, todo.title, todo.list.name)
     view = await c.view_of(uow, actor, todo)
     await uow.session.commit()
     return Outcome(value=view, effects=effects, changed_schedule=retime)
@@ -306,11 +299,9 @@ async def set_details(
 async def set_assignees(
     uow: Uow, actor: Actor, todo_id: int, user_ids: Sequence[int]
 ) -> Outcome[TodoView]:
-    """Replace the assignees of a server to-do (D19: personal to-dos have none)."""
+    """Replace the assignees. They get pinged; they don't need to be collaborators (D50)."""
     todo = await _load_for_edit(uow, actor, todo_id)
-    if todo.scope != Scope.SERVER:
-        raise InvalidOperation("Personal to-dos can't have assignees.")
-    wanted = _clean_assignees(actor, Scope.SERVER, list(user_ids))
+    wanted = _clean_assignees(actor, list(user_ids))
     for assignee in list(todo.assignees):
         if assignee.user_id not in wanted:
             todo.assignees.remove(assignee)
@@ -326,6 +317,7 @@ async def complete(uow: Uow, actor: Actor, todo_id: int) -> Outcome[TodoView]:
     (the sent reminder if there is one, else the next pending one)."""
     todo = await c.load_todo(uow, actor, todo_id, lock=True)
     c.require_open(todo)
+    c.require_complete(actor, todo)
     occs = (await c.open_occurrences(uow, [todo.id]))[todo.id]
     active = c.find(occs, OccurrenceStatus.SENT) or c.find(occs, OccurrenceStatus.PENDING)
     if active is not None:
@@ -343,8 +335,25 @@ async def complete(uow: Uow, actor: Actor, todo_id: int) -> Outcome[TodoView]:
 async def delete(uow: Uow, actor: Actor, todo_id: int) -> Outcome[TodoView]:
     """Soft delete: status cancelled, open occurrences cancelled, reminder deleted."""
     todo = await _load_for_edit(uow, actor, todo_id)
-    effects, had_pending = await _cancel_open(uow, todo, include_sent=True)
+    effects, had_pending = await c.cancel_open(uow, todo, include_sent=True)
     todo.status = TodoStatus.CANCELLED
     view = await c.view_of(uow, actor, todo)
     await uow.session.commit()
     return Outcome(value=view, effects=effects, changed_schedule=had_pending)
+
+
+async def move(uow: Uow, actor: Actor, todo_id: int, list_id: int) -> Outcome[TodoView]:
+    """Move a to-do to another list of the same server (D48). Needs edit rights on its
+    list and add rights on the target; the title must be free there (D44). Reminders,
+    subtasks and assignees stay."""
+    todo = await _load_for_edit(uow, actor, todo_id)
+    target = await lists.resolve(uow, actor, list_id)
+    if target.id == todo.list_id:
+        raise InvalidOperation(f"{bold(todo.title)} is already on {bold(target.name)}.")
+    c.require_add(actor, target)
+    await c.require_unique_title(uow, target, todo.title, exclude_todo_id=todo.id)
+    todo.list = target
+    await c.flush_titles(uow, todo.title, target.name)
+    view = await c.view_of(uow, actor, todo)
+    await uow.session.commit()
+    return Outcome(value=view)

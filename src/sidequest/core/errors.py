@@ -47,3 +47,7 @@ class LimitExceeded(SidequestError):
 
 class InvalidOperation(SidequestError):
     """The request makes no sense for this to-do (e.g. a date for a repeating to-do)."""
+
+
+class NameTaken(InvalidOperation):
+    """A list name (D43) or an open to-do title on a list (D44) is already in use."""

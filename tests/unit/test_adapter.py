@@ -7,37 +7,8 @@ import discord
 import pytest
 
 from sidequest.bot import adapter
-from sidequest.bot.adapter import ScopeOption
-from sidequest.core.enums import Scope
 from sidequest.core.errors import InvalidOperation
-from sidequest.services.actor import Actor
 from sidequest.services.effects import DeleteMessage
-
-
-def actor(guild_id: int | None) -> Actor:
-    return Actor(user_id=1, guild_id=guild_id, can_manage_guild=False, origin="discord")
-
-
-# --- resolve_scope -----------------------------------------------------------------------
-
-
-def test_resolve_scope_defaults_to_server_inside_a_guild() -> None:
-    assert adapter.resolve_scope(actor(5), None) == Scope.SERVER
-
-
-def test_resolve_scope_defaults_to_personal_outside_a_guild() -> None:
-    assert adapter.resolve_scope(actor(None), None) == Scope.PERSONAL
-
-
-def test_resolve_scope_server_outside_a_guild_is_an_error() -> None:
-    with pytest.raises(InvalidOperation) as info:
-        adapter.resolve_scope(actor(None), ScopeOption.Server)
-    assert info.value.message == adapter.NOT_IN_SERVER
-
-
-def test_resolve_scope_personal_inside_a_guild() -> None:
-    assert adapter.resolve_scope(actor(5), ScopeOption.Personal) == Scope.PERSONAL
-
 
 # --- parse_id ----------------------------------------------------------------------------
 
@@ -60,6 +31,28 @@ def test_parse_id_custom_message() -> None:
     with pytest.raises(InvalidOperation) as info:
         adapter.parse_id("x", "custom")
     assert info.value.message == "custom"
+
+
+def test_parse_list_id_none_is_no_list() -> None:
+    assert adapter.parse_list_id(None) is None
+
+
+def test_parse_list_id_empty_is_no_list() -> None:
+    assert adapter.parse_list_id("") is None
+
+
+def test_parse_list_id_blank_is_no_list() -> None:
+    assert adapter.parse_list_id("  ") is None
+
+
+def test_parse_list_id_reads_digits() -> None:
+    assert adapter.parse_list_id("12") == 12
+
+
+def test_parse_list_id_free_text_asks_to_pick_a_list() -> None:
+    with pytest.raises(InvalidOperation) as info:
+        adapter.parse_list_id("abc")
+    assert info.value.message == adapter.PICK_A_LIST
 
 
 # --- with_notes --------------------------------------------------------------------------

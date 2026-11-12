@@ -3,17 +3,6 @@
 from enum import StrEnum
 
 
-class Scope(StrEnum):
-    """Which list a to-do belongs to."""
-
-    SERVER = "server"
-    """The shared list of one Discord server; requires a guild_id. Reminders go to the
-    server's reminder channel and ping the assignees."""
-
-    PERSONAL = "personal"
-    """The owner's own list, the same in every server and in DMs. Reminders arrive as a DM."""
-
-
 class TodoKind(StrEnum):
     """Whether a to-do happens once or repeats."""
 
