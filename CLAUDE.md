@@ -1,7 +1,8 @@
 # Sidequest — what Claude Code needs to know
 
-> Written by Claude (Opus 5.5), 2026-11-12. Replaces the segment setup (S1–S9), which is archived in
-> `docs/claude/archive/initial-release/`. Read this file, then only the brief for the feature you're working on.
+> Written by Claude (Opus 5.5), 2026-11-12; updated 2026-11-14. Replaces the segment setup (S1–S9), which
+> is archived in `docs/claude/archive/initial-release/`. Read this file, then only the brief for the feature
+> you're working on.
 
 Sidequest is a Discord to-do bot for servers: Python 3.12, discord.py, PostgreSQL 17, Docker Compose on
 Tim's Raspberry Pi (64-bit, arm64). Tim develops on Windows and deploys on the Pi with `update.sh`.
@@ -26,6 +27,12 @@ A web frontend may come later; it is out of scope, but the layering leaves room 
    describes, update this file too (the decision log in §6 and the affected section).
 7. Stop and report to Tim: what was built, files changed, deviations, open questions, the manual test
    checklist and a suggested commit message. Don't start the next feature.
+8. Once Tim has committed a feature and starts the next one, its brief moves (plain `mv`) to
+   `docs/claude/archive/briefs/<slug>.md` with Status `done`. `docs/claude/briefs/` only holds live briefs.
+
+A brief may hold several features as **segments** (Segment 1, 2, …), each with its own decisions,
+checklist and manual tests. Work through one segment per session, in the order the brief gives, unless
+it says otherwise. Code comments cite decisions (`D<n>`), not segment numbers (`S<n>` means S1–S9).
 
 A new feature request from Tim starts with a brief, not code: ask the design questions that matter,
 write the brief with his answers, set it to `ready`, and stop.
@@ -222,14 +229,15 @@ Title ≤ 200 · details ≤ 4000 · subtask title ≤ 100 · subtasks ≤ 50 ·
 - Command options are added via factory functions (`build_todo_group()` etc.), not class-based groups.
   `todo`/`list` options are strings with autocomplete; the `list` option is `list_` in Python with
   `@app_commands.rename`.
-- Code comments mention `BRIEF §…`, `D<n>` and `S<n>`: those point to `docs/claude/archive/initial-release/`. The live
-  decisions are summarised in §6.
+- Code comments mention `BRIEF §…`, `D<n>` and `S<n>`. D1–D59 and S1–S9 point to
+  `docs/claude/archive/initial-release/`; D60–D69 to `docs/claude/archive/briefs/undo-check-off.md`; later
+  ones to their feature's brief. The live decisions are summarised in §6.
 
 ---
 
 ## 6. Decisions still in force
 
-Numbered as in the archived brief; superseded ones are left out. New decisions continue from D60
+Numbered as in the archived briefs; superseded ones are left out. New decisions continue from D70
 and are added here and in the feature's brief.
 
 | ID | Decision |

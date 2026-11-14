@@ -1,0 +1,258 @@
+# Brief — Weekday dates, suspensions, per-day times, start and end dates
+
+**Status:** ready · **Branch:** `claude/dates-and-schedules` · **Migration:** none (all new data lives in
+the rule JSON) · Written by Claude (Opus 5.5), 2026-11-14.
+
+Four features, one segment each, **numbered in build order**: run Segment 1, 2, 3, 4, one per session.
+Start/end (2) comes before suspensions (3) because suspensions need "a repeating to-do can run out of
+occurrences", which Segment 2 introduces. Each segment ends with green checks, its Handoff lines and a
+stop for Tim. (Tim's original numbering: 1 weekday dates, 2 suspensions, 3 per-day times, 4 start/end.)
+
+**Read first:** `CLAUDE.md` §3 (how the pieces talk), §4 (repeating rules, occurrences and reminders),
+§5. Main code: `core/timeparse.py`, `core/recurrence.py`, `services/_common.py` (`add_next_pending`,
+`finish_occurrence`, `todo_view`), `services/todos.py` (`create_recurring`, `_retime_recurring`, `complete`),
+`services/occurrences.py` (`claim_due`, `complete_occurrence`), `services/undo.py`, `bot/options.py`,
+`bot/adapter.py` (`due_input`, `local_date`), `bot/commands/repeat.py`, `bot/commands/todo_edit.py`,
+`bot/views/confirm.py`, `bot/render.py` (`when`, `short_when`, `todo_embed`).
+
+**Who does what.** Main session: everything in `core/recurrence.py`, services, scheduler and the new views.
+Haiku (`model: "haiku"`, self-contained prompt, reviewed): the table-driven tests listed per segment,
+copying an option or wiring pattern to the other commands once the first one is done, and check runs.
+Opus: docs.
+
+**Shown dates.** Points in time stay Discord timestamps (D1). Plain dates (start, end, suspensions) are
+not points in time; they're shown as `DD-MM-YYYY` (e.g. `16-11-2026`), with "today" where that's clearer.
+
+---
+
+## Segment 1 — A weekday is a date
+
+### Decisions (D70–D72)
+
+| ID | Decision | Source |
+|---|---|---|
+| D70 | **Every date option accepts a weekday name**: `mon`…`sun`, full names, `tue/tues`, `weds`, `thu/thur/thurs` (the `days` words without `weekdays`/`weekend`), any case. It becomes the next date with that weekday, in the zone the to-do uses (as `today`/`tomorrow`). Applies to `/todo add date`, `/todo edit date`, `start` and `end` (Segment 2) and the suspension dates (Segment 3). | Tim |
+| D71 | **Weekday = today.** With a time (`/todo add date+time`; `/todo edit date`, which keeps the current time when none is given): today if that moment is still to come, otherwise the same weekday next week. For date-only options (`start`, `end`, suspensions): today counts. `today` itself keeps its old behaviour (a past moment is refused). | Tim (timed), Claude (date-only) |
+| D72 | **Wording.** `DATE_HINT` becomes "Use YYYY-MM-DD or DD-MM-YYYY (e.g. 2026-11-12), today, tomorrow or a weekday (e.g. monday)." Option descriptions mention "or a weekday" (≤ 100 chars). `next monday` and similar are not supported. | Claude |
+
+Example (today Sat 14-11-2026): `monday` → 16-11-2026. On Monday 16-11 at 14:00, `date:monday time:14:30`
+→ 16-11 14:30; at 15:00 → 23-11 14:30.
+
+### Implementation
+- `core/timeparse.py`: `parse_date(s, today)` resolves weekday words (today if it matches, else the next
+  one). New `is_weekday_word(s) -> bool`. Share the word table with `parse_weekdays` (minus the groups).
+- `DueInput` gets `roll_week: bool = False` ("came from a weekday name: if the moment has passed, use the
+  same weekday next week"). `resolve_due(..., *, roll_week=False)`: if `roll_week` and the moment is
+  `<= now`, add 7 days (resolve again for DST) instead of raising `InPast`.
+- `adapter.due_input` sets `roll_week=is_weekday_word(date_text)`. `options.edit_patch` keeps the flag when
+  it fills in the current time.
+- `common.check_options` already validates the format with a dummy date; weekday words pass.
+
+### Checklist
+1. [ ] Core + adapter + options + descriptions — **Haiku** from this section, reviewed.
+2. [ ] Tests — **Haiku**, reviewed: `parse_date` for every word from a Wednesday and on the matching day;
+   `is_weekday_word`; `resolve_due` with `roll_week` (later today, earlier today, exactly now → next week,
+   DST week in Europe/Amsterdam); `edit_patch` keeping the flag; a non-weekday date unchanged.
+3. [ ] Docs — Opus: `CLAUDE.md` §4 (dates line), §6 (D70–D72); README features line.
+4. [ ] Checks (CLAUDE.md §7). Handoff.
+
+### Manual test (Tim)
+- [ ] `/todo add date:monday time:14:30` → due next Monday 14:30.
+- [ ] On the weekday itself: a time still to come → today; a time already gone → next week.
+- [ ] `/todo edit todo:<timed> date:friday` → Friday, same time.
+- [ ] `date:mondy` → error with the new hint.
+
+---
+
+## Segment 2 — Start and end dates for repeating to-dos
+
+### Decisions (D73–D80)
+
+| ID | Decision | Source |
+|---|---|---|
+| D73 | **All four `/todo repeat` commands get `start` and `end`** (optional dates, inclusive, weekday names work). `/todo edit` gets `end`, and `start` for every repeating to-do (was weekly only). `start:none` / `end:none` in `/todo edit` removes it. Weekly with `every` ≥ 2 keeps D54–D59: `start` also picks the on-weeks; removing it re-anchors to the next occurrence (D56). Takes "start dates for daily/monthly rules" off the out-of-scope list. | Tim |
+| D74 | **First and last.** The first reminder is the first occurrence on or after `start`, the last is the last one on or before `end` (dates in the to-do's zone). `start`/`end` don't have to be matching days. | Tim, Claude (non-matching days) |
+| D75 | **Validation.** `start` at most a year ahead (`START_AHEAD_MAX_DAYS`, now for all rules); `end` ≥ `start`; at least one occurrence between now (or `start`) and `end`, else "No reminder of **title** falls between DD-MM-YYYY and DD-MM-YYYY." Exception on edit: when a reminder is up, an `end` that leaves nothing after it is allowed, and that reminder becomes the last. `end` has no upper limit. | Claude |
+| D76 | **Running out.** After the last occurrence is posted, nothing new is scheduled: a repeating to-do can now have **no pending occurrence**. Its last reminder stays up until it's checked off (nothing replaces it, so D7 doesn't apply). After downtime past `end`, the one catch-up reminder is the last. | Claude |
+| D77 | **Confirm the last one.** Checking off the last occurrence (reminder Done, `/todo done`, `/todo show` → Done, `/todo upcoming` early) first asks "This is the last reminder of **title** (it ends on DD-MM-YYYY). Checking it off marks the to-do done. Check it off?" with **Check off** / **Cancel**. When the D67 non-assignee question applies too, it's one message with both sentences. Ticking subtasks never asks. | Tim |
+| D78 | **The last check-off marks the to-do done**, like a one-time to-do (`completed_at/by` set, kept in history, off the open lists). **Its name is free again** at once (the open-title index only covers open to-dos, D44). | Tim |
+| D79 | **Undo** of the last check-off reopens the to-do and restores the occurrence as usual (D63/D64). It's refused with the title-clash message when an open to-do on the list has taken the name since. | Claude |
+| D80 | **Display.** The rule description ends with ", from DD-MM-YYYY" (only while `start` is still ahead) and ", until DD-MM-YYYY". `render.when`: "Next: …"; when the next one is the last, "Next (last): …"; when the last is up and nothing follows, "Last reminder — nothing after this one". `short_when` shows "🔁 last: …" for the final one. | Claude |
+
+### Implementation
+- **`core/recurrence.py`** (main session):
+  - Move `start` from `WeeklyRule` to `_Rule` and add `end: EndDate | None = None`; `to_json` leaves both
+    out when unset (old rows keep their shape). Validate `end >= start` in a model validator.
+  - `_matches` checks the window for every rule type. `next_occurrence(...) -> datetime | None`: **None
+    means the series is over** (search stops after `end`). `InvalidRule("no upcoming occurrence")` stays
+    only as the bug guard when the search runs out without an `end`. Update `occurrences_between` and
+    `anchored` for None.
+  - `anchored`: the start limit for all rules; it doesn't check "something left" (the service does,
+    because of the D75 exception).
+  - `describe(rule, tz, today: date | None = None)`: D80 suffixes (`from` only when `start > today`).
+- **Services:** `add_next_pending` returns `Occurrence | None`. Callers: `create_recurring` (None →
+  refuse, D75), `_retime_recurring` (None and no sent reminder → refuse), `claim_due` (None → nothing),
+  `finish_occurrence` (None → no follow-up, `followup_id=None`; and when the occurrence being checked off
+  is the last, mark the to-do done with `mark_todo_done`).
+  - "Last": an open occurrence with no other pending one after it and `next_occurrence(after its
+    due_at) is None`. `TodoView` gets `final_occurrence_id: int | None` (computed in `todo_view`) and
+    `ends_on: date | None`.
+  - `services/undo.py`: when the token's check-off finished the to-do, reopen it (`status=open`,
+    `completed_*` cleared) behind `require_unique_title` + `flush_titles`, then restore the occurrence as
+    today. A repeating undo with `followup_id=None` and `previous=pending` has nothing to cancel.
+  - Keep `todos.py` under ~400 lines: move helpers into `_common.py` or a new module if needed.
+- **Bot:** `start`/`end` on daily, monthly-weekday, monthly-day (copy the weekly pattern — **Haiku** after
+  the first); `edit_patch`/`edited_rule`: `start`/`end` allowed for all rule types, a `CLEAR` sentinel for
+  `none`. `views/confirm.py`: `must_confirm(actor, todo, occurrence_id)` is true for non-assignees or the
+  final occurrence; `render.check_off_prompt(todo, *, not_assignee, last)` builds one message.
+  The created/edited reply shows the description with its dates.
+- **Runbook:** add "Upgrading to dates-and-schedules": no migration, but **rolling back is unsafe** once
+  a to-do uses `start`/`end` on a non-weekly rule, `end`, suspensions or per-day times: older code
+  rejects the new JSON keys (`extra="forbid"`). Rollback = restore the pre-upgrade backup.
+
+### Checklist
+1. [ ] Recurrence core — main session.
+2. [ ] Core tests — **Haiku**, reviewed (`tests/unit/test_recurrence_window.py`): every rule type with
+   `start` only / `end` only / both; first = first match on/after start, last = last match on/before
+   end; non-matching start/end days; `end < start` refused; JSON round-trip and old shapes unchanged;
+   `next_occurrence` → None after the last; `every` ≥ 2 with `end`; DST day as last day; `describe`
+   suffixes.
+3. [ ] Services — main session (above).
+4. [ ] Service tests — **Haiku**, reviewed: create with nothing in the window refused; scheduler posts
+   the last one and leaves no pending; catch-up past `end` gives one late reminder and nothing after;
+   last checked off (reminder, early, `/todo done`) → to-do done, name free (new open to-do with the same
+   title works); undo reopens; undo refused after the name was taken; edit `end` earlier cancels a pending
+   occurrence past it; the D75 exception with a reminder up; `start:none`/`end:none`; `final_occurrence_id`.
+5. [ ] Bot — main session for the confirm and render; **Haiku** for the option copies.
+6. [ ] Render unit tests — **Haiku**: `when`/`short_when` for next, next-last, last-up; prompt with
+   last only, non-assignee only, both.
+7. [ ] Docs — Opus: `CLAUDE.md` §4 (rules, "at most one pending, none after the last"), §6 D73–D80,
+   out-of-scope list; README; runbook note.
+8. [ ] Checks. Handoff.
+
+### Manual test (Tim)
+- [ ] `/todo repeat daily times:20:00 start:monday end:wednesday` → `/todo show` says "from … until …",
+      fires Mon, Tue, Wed.
+- [ ] On Wednesday the reminder says Next (last); Done → last-reminder question → Check off → to-do is
+      done, gone from `/todo list`, and a new to-do with the same title can be added.
+- [ ] Undo it (before adding the duplicate) → back, reminder re-posted.
+- [ ] Non-assignee on the last one → one message with both questions.
+- [ ] `/todo edit end:none` → back to repeating forever.
+- [ ] `end` before any occurrence → refused with the dates.
+
+---
+
+## Segment 3 — Suspending a repeating to-do
+
+### Decisions (D81–D89)
+
+| ID | Decision | Source |
+|---|---|---|
+| D81 | **Suspensions.** A repeating to-do can be suspended between two dates, inclusive, in its zone: no reminder fires on those days; it carries on with the first occurrence after the end day. Repeating to-dos only. Several per to-do, **never overlapping** (touching is fine), at most 10 current/upcoming (`SUSPENSIONS_MAX`). | Tim |
+| D82 | **`/todo suspend todo [start] [end]`**, at least one date. Only `start` → just that day. Only `end` → from now until `end`. Both → that range. `start` ≥ today, `end` ≥ `start`, `end` at most a year ahead. Weekday names work (today counts, D71). | Tim (forms), Claude (limits) |
+| D83 | **What "now" covers.** Reminders that have already fired, including one that is up right now, are not affected: it stays and can be checked off. Only reminders still to come are skipped. | Claude |
+| D84 | **Always confirm.** The reply lists every reminder that would be skipped (`<t:…:f>`, oldest first, within the to-do's `end`): up to 20 lines, then "…and N more (M in total)". Buttons **Suspend** / **Cancel** (5 minutes). The service re-checks everything on Suspend. Reply: "⏸️ **title** is suspended from DD-MM-YYYY to DD-MM-YYYY. Next: <ts>". | Tim (confirm with list), Claude (cap, wording) |
+| D85 | **Refused** (before the confirm, and again on Suspend): nothing to skip ("No reminder of **title** falls between …"); overlap ("That overlaps the suspension from DD-MM-YYYY to DD-MM-YYYY. Cancel that one first, or pick other dates."); it would skip every remaining reminder of a to-do with an `end` while none is up ("That would skip every remaining reminder. Change the end date or delete the to-do instead."); more than 10. | Claude |
+| D86 | **Cancel with `/todo unsuspend todo suspension`**; `suspension` autocompletes that to-do's current and upcoming suspensions ("16-11-2026 – 22-11-2026", "today – 22-11-2026"), like `/todo subtask remove`. No confirm (adding it again is easy). Reminders skipped earlier don't come back; the next one is the first still to come. Reply: "▶️ Suspension from … to … cancelled. Next: <ts>". | Tim (cancellable), Claude (command) |
+| D87 | **Display.** `/todo show` gets a "Suspended" field with current and upcoming suspensions. `short_when` adds "⏸️ until DD-MM-YYYY" while one is running. `Next:` already skips them. | Claude |
+| D88 | **Storage: in the rule JSON**, `"suspended": [{"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}, …]`, sorted, left out when empty; no migration. Finished ones (`end` < today) are dropped whenever the rule is written. Rule edits and timezone changes keep them as the same local dates. | Claude |
+| D89 | **Permissions and schedule.** Same rights as editing (`require_edit`). Suspend and unsuspend replace the pending occurrence like an edit does, so an earlier check-off can then no longer be undone ("changed after it was checked off", D65). | Claude |
+
+### Implementation
+- **Core** (main session): `DateRange(start, end)` (frozen, `start <= end`, JSON as above) and
+  `_Rule.suspended: tuple[DateRange, ...] = ()`; `_matches` is False on a suspended day. Helpers:
+  `with_suspension(rule, rng)` (overlap → `InvalidRule`), `without_suspension(rule, start)`,
+  `pruned(rule, today)`. The preview is `occurrences_between(rule, tz, max(now, start 00:00), end+1 00:00)`
+  of the rule as it is now.
+- **Services:** new `services/suspensions.py`: `preview(uow, actor, todo_id, start, end) ->
+  SuspensionPreview(start, end, skipped: tuple[datetime, ...], total: int)` (no write), `suspend(...) ->
+  Outcome[TodoView]`, `unsuspend(uow, actor, todo_id, start: date) -> Outcome[TodoView]`,
+  `current(uow, actor, todo_id) -> tuple[DateRange, ...]` (autocomplete). Lock the to-do; write the
+  pruned rule; `cancel_open(include_sent=False)` + `add_next_pending(after=now)`; `changed_schedule=True`.
+  Dates come in as `date | None`; the service fills in today (in the to-do's zone) and applies D82.
+- **Bot:** `bot/commands/todo_suspend.py` with both commands; autocomplete `suspension` reads
+  `namespace.todo` (value = ISO start date). Confirm view in `views/confirm.py` or `views/suspend.py`.
+  Wire the second command after the first — **Haiku** may do `unsuspend` + autocomplete from the pattern.
+
+### Checklist
+1. [ ] Core — main session. 2. [ ] Core tests — **Haiku**: skipping days, touching vs overlapping,
+   pruning, JSON round-trip, `next_occurrence` across a suspension, with `end`.
+3. [ ] Services — main session. 4. [ ] Service tests — **Haiku**: the three D82 forms (incl. "only end" on
+   a day whose earlier reminder already fired); preview count and cap; each D85 refusal; reminder up stays
+   (D83); unsuspend reschedules earlier; undo after suspend refused as changed; one-time to-do refused;
+   permissions.
+5. [ ] Bot — main session + **Haiku**. 6. [ ] Render tests — **Haiku**: preview text with 0/3/25 entries,
+   the Suspended field, `short_when` marker.
+7. [ ] Docs — Opus: `CLAUDE.md` §4 (new subsection), §6 D81–D89; README. 8. [ ] Checks. Handoff.
+
+### Manual test (Tim)
+- [ ] `/todo suspend todo:<daily> start:monday end:wednesday` → list of the skipped reminders → Suspend →
+      nothing fires Mon–Wed, Thursday does.
+- [ ] `start` only → only that day; `end` only → from now.
+- [ ] A long range on a daily with several times → 20 lines + "…and N more".
+- [ ] Overlapping second suspension refused; touching one accepted.
+- [ ] `/todo unsuspend` autocompletes both; cancel one → Next moves earlier.
+- [ ] `/todo show` lists them; `/todo list` shows ⏸️ while one runs.
+
+---
+
+## Segment 4 — Different times per weekday (week builder)
+
+Tim chose the **week builder** over a schedule text option or a per-day override command (2026-11-14).
+
+### Decisions (D90–D97)
+
+| ID | Decision | Source |
+|---|---|---|
+| D90 | **Weekly rules can have different times per weekday** (e.g. Mon 05:10, Tue 07:30, Wed–Thu 05:10, Sat 09:00 and 18:00). 1–12 times per day. | Tim |
+| D91 | **Storage.** Same times on every chosen day → the existing `weekdays` + `times` shape (old rows unchanged). Otherwise `"day_times": {"mon": ["05:10"], "tue": ["07:30"], …}` replaces both. The model normalises (collapses equal times back) and gives `times_for(day)`; `next_occurrence` uses it. `every`, `start`, `end`, `suspended` work as before. | Claude |
+| D92 | **Opening the builder: `/todo repeat weekly custom-times:true`.** `days` and `times` become optional: without `custom-times` both are required ("Give `days` and `times`, or set `custom-times:true` to build the week."); with it, both given together prefill the builder (one alone is an error). All other options are taken as usual. | Tim |
+| D93 | **Layout.** Ephemeral message: embed "Week for **title**", seven lines Mon–Sun (times, or "—"), footer with the zone and every/start/end. Row 1: multi-select **Pick days…** (Mon–Sun; each option's description = its times or "off"). Row 2: **Set times** (modal "Times for Mon, Wed and Thu", one field, prefilled when the picked days share times, placeholder `05:10, 18:00`), **Clear** (turns the picked days off), **Save**, **Cancel**. Set times / Clear with nothing picked → "Pick one or more days first." After each change the selection resets and the embed updates. | Tim (builder), Claude (details) |
+| D94 | **Save / Cancel / timeout.** Save needs at least one day with times. With `details:true`, Save opens the details modal, then creates (same as `create_flow`). The reply is today's created text with the week. Cancel → "Not added." (edit: "Nothing changed."). Owner-only, **15-minute** timeout → "This week editor expired; nothing was saved." | Claude |
+| D95 | **Editing: `/todo edit todo custom-times:true`** on a weekly to-do opens the builder with its current week. It can be combined with the other edit options except `days`/`times`; all are applied together on Save. On another rule type: the usual "can't switch the repeat type" error. | Claude |
+| D96 | **`days:`/`times:` on a to-do with per-day times are refused** in `/todo edit`: "**title** has different times per day; use `custom-times:true` to change its week." (No guessing which day gets what.) | Claude |
+| D97 | **Description** groups days with equal times, in weekday order: "Every Monday, Wednesday and Thursday at 05:10, Tuesday at 07:30 and Saturday at 09:00 and 18:00 (Europe/Amsterdam)", plus the D80 suffixes. | Claude |
+
+### Implementation
+- **Core** (main session): `WeeklyRule` with optional `day_times`, normalising validator, `times_for`,
+  JSON per D91, `describe` per D97; `edited_rule` raises D96.
+- **Bot** (main session): `bot/views/week_builder.py` — `WeekBuilderView(BaseView)` holding a
+  `dict[Weekday, tuple[time, ...]]`, `timeout=900`, an `on_save(interaction, rule)` callback, and a
+  `TimesModal(BaseModal)` that parses with `parse_times`. `render.week_embed(title, week, tz, rule extras)`.
+  `/todo repeat weekly` and `/todo edit` build the callback (create via `todos.create_recurring` /
+  edit via `todos.edit`), reusing `create_flow`'s details step on Save.
+
+### Checklist
+1. [ ] Core — main session. 2. [ ] Core tests — **Haiku**: JSON round-trip both shapes, collapsing,
+   `next_occurrence` across a mixed week incl. DST, with `every` 2 and suspensions, ≤ 12 per day,
+   `describe` grouping, D96 refusals.
+3. [ ] Builder view + commands — main session. 4. [ ] Render tests — **Haiku**: `week_embed` lines and
+   select descriptions.
+5. [ ] Docs — Opus: `CLAUDE.md` §4 rules, §3 package map (new view), §6 D90–D97; README.
+6. [ ] Checks. Handoff.
+
+### Manual test (Tim)
+- [ ] `/todo repeat weekly title:Gym custom-times:true` → pick Mon, Wed, Thu → Set times 05:10 → pick Tue
+      → 07:30 → pick Sat → 09:00, 18:00 → Save → description as D97, reminders fire at those times.
+- [ ] Prefill with `days:weekdays times:05:10`, change Tuesday only.
+- [ ] Clear a day; Save with no days → refused.
+- [ ] `details:true` → details form after Save.
+- [ ] `/todo edit todo:Gym custom-times:true` shows the current week; Save changes the next reminder.
+- [ ] `/todo edit todo:Gym times:06:00` → D96 message.
+- [ ] Leave the builder for 15 minutes → expired text.
+
+---
+
+## Tim's answers (2026-11-14)
+
+Numbered by Tim's original feature order.
+
+1. Weekday on today → today if the time is still to come, else next week (D71).
+2. Suspension forms (one day / from now / range), confirmation listing every skipped reminder,
+   cancellable, several per to-do, never overlapping (D81–D86).
+3. Per-day times UI → the week builder via `custom-times:true` (D92–D95).
+4. Start/end inclusive; confirm on the last occurrence (D73–D77).
+5. After the last check-off the to-do is **marked done** (not deleted), and its name is free again (D78).
+
+## Handoff
+(per segment, filled in by the session that builds it)

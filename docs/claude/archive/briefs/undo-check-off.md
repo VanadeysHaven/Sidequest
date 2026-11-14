@@ -1,6 +1,6 @@
 # Brief — Undo a check-off, and confirm when you're not an assignee
 
-**Status:** waiting for review. Built 2026-11-12; checks green (654 tests). Tim's manual test (§6) is still open.
+**Status:** done. Built 2026-11-12 (checks green, 654 tests), committed in `9575ce4`, archived 2026-11-14.
 **Branch:** `claude/undo-check-off` · **Migration:** none · Written by Claude (Opus 5.5), 2026-11-12.
 
 **Goal:** a check-off is no longer a one-way street. Wherever something is checked off, the reply gets an
