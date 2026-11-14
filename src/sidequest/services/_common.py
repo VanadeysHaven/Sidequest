@@ -290,6 +290,7 @@ def todo_view(
     """Map a loaded to-do (assignees + subtasks) and its open occurrences to a view."""
     rule = rule_of(todo) if todo.kind == TodoKind.RECURRING else None
     zone = get_zone(todo.timezone)
+    today = now.astimezone(zone).date()
     pending = find(occurrences, OccurrenceStatus.PENDING)
     sent = find(occurrences, OccurrenceStatus.SENT)
     final = _series.final_occurrence(rule, zone, pending, sent) if rule else None
@@ -307,14 +308,14 @@ def todo_view(
         timezone=todo.timezone,
         due_at=todo.due_at,
         rule=rule,
-        rule_description=(
-            recurrence.describe(rule, zone, now.astimezone(zone).date()) if rule else None
-        ),
+        rule_description=recurrence.describe(rule, zone, today) if rule else None,
         next_due_at=pending.due_at if pending else None,
         pending_occurrence_id=pending.id if pending else None,
         reminder=occurrence_view(sent) if sent else None,
         final_occurrence_id=final.id if final else None,
         ends_on=rule.end if rule else None,
+        suspensions=_series.suspension_views(rule, today) if rule else (),
+        suspended_until=recurrence.suspended_until(rule, today) if rule else None,
         assignee_ids=assignees,
         subtasks=tuple(
             SubtaskView(

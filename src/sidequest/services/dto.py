@@ -64,6 +64,15 @@ class OccurrenceView(StrictModel):
     message_id: int | None
 
 
+class SuspensionView(StrictModel):
+    """A current or upcoming suspension of a repeating to-do (D81), dates inclusive."""
+
+    start: dt.date
+    end: dt.date
+    running: bool
+    """It has started (today is on or after `start`)."""
+
+
 class TodoView(StrictModel):
     id: int
     guild_id: int
@@ -91,6 +100,10 @@ class TodoView(StrictModel):
     Checking it off marks the to-do done (D78)."""
     ends_on: dt.date | None = None
     """The rule's `end` date, if any."""
+    suspensions: tuple[SuspensionView, ...] = ()
+    """Current and upcoming suspensions, oldest first (D87)."""
+    suspended_until: dt.date | None = None
+    """While a suspension runs: its last day (following touching ones)."""
     assignee_ids: tuple[int, ...]
     subtasks: tuple[SubtaskView, ...]
     created_at: datetime
@@ -176,6 +189,26 @@ class Undone(StrictModel):
     todo: TodoView
     repost: DueReminder | None
     """The reminder to post again (it was up when it was checked off, D64)."""
+
+
+class SuspensionPreview(StrictModel):
+    """What `/todo suspend` asks about (D84)."""
+
+    title: str
+    suspension: SuspensionView
+    skipped: tuple[datetime, ...]
+    """Every reminder it would skip, oldest first (the bot pages through them)."""
+
+    @property
+    def total(self) -> int:
+        return len(self.skipped)
+
+
+class SuspensionChange(StrictModel):
+    """After `suspend` / `unsuspend`: the to-do and the suspension added or cancelled."""
+
+    todo: TodoView
+    suspension: SuspensionView
 
 
 class GuildSettingsView(StrictModel):

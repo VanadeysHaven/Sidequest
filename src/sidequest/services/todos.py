@@ -269,7 +269,10 @@ async def _retime_recurring(uow: Uow, todo: Todo, patch: TodoPatch) -> None:
     zone = get_zone(patch.timezone) if patch.timezone else get_zone(todo.timezone)
     # Anchored in the (possibly new) zone; a kept `start` stays as it is (D57).
     rule = recurrence.anchored(patch.rule or c.rule_of(todo), zone, now)
-    if _series.is_over(rule, zone, now):
+    # After a reminder still to come was checked off early, continue after it, so the
+    # edit doesn't bring it back.
+    base = await _series.schedule_base(uow, todo.id, now)
+    if _series.is_over(rule, zone, base):
         occs = (await c.open_occurrences(uow, [todo.id]))[todo.id]
         if c.find(occs, OccurrenceStatus.SENT) is None:
             raise _series.nothing_between(todo.title, rule, zone, now)
@@ -277,7 +280,7 @@ async def _retime_recurring(uow: Uow, todo: Todo, patch: TodoPatch) -> None:
     todo.recurrence = recurrence.to_json(rule)
     # The sent reminder (if any) stays: it is the current occurrence and can still be done.
     await c.cancel_open(uow, todo, include_sent=False)
-    c.add_next_pending(uow, todo, after=now)
+    c.add_next_pending(uow, todo, after=base)
 
 
 async def edit(uow: Uow, actor: Actor, todo_id: int, patch: TodoPatch) -> Outcome[TodoView]:

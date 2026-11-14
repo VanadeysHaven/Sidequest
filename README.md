@@ -17,7 +17,8 @@ ping the assignees. Sidequest only works in servers (no DMs).
 - **Repeating to-dos:** daily, weekly (several days, optionally every 2–52 weeks), monthly on
   a weekday ("first Sunday") or on a day of the month ("the 15th", "last day"), each with one
   or more times. Each can have a start and an end date; after the last reminder is checked
-  off, the to-do is done.
+  off, the to-do is done. Repeating to-dos can be **suspended** for a few days (a holiday,
+  say): no reminders between two dates, then they carry on.
 - **Subtasks** (up to 50 per to-do) and long multi-line **details**.
 - **Reminders** with a **Done** button and subtask checkboxes; whoever may work on the list
   can check it off. An unchecked reminder of a repeating to-do is replaced by the next one.
@@ -38,6 +39,7 @@ ping the assignees. Sidequest only works in servers (no DMs).
 | `/todo list` · `/todo show` · `/todo upcoming` | View a list, one to-do, or what's coming up |
 | `/todo done` · `/todo edit` · `/todo details` · `/todo assign` · `/todo move` · `/todo delete` | Change a to-do |
 | `/todo subtask add` · `/todo subtask remove` | Manage the checklist |
+| `/todo suspend` · `/todo unsuspend` | Pause a repeating to-do between two dates; cancel a pause |
 | `/lists create` · `/lists rename` · `/lists delete` · `/lists show` | Manage the server's lists |
 | `/lists collaborators` · `/lists transfer` | Choose who may work on a list; give it a new owner |
 | `/settings timezone` · `/settings default-list` | Set your timezone; pick your default list |

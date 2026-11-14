@@ -1,6 +1,6 @@
 # Sidequest — what Claude Code needs to know
 
-> Written by Claude (Opus 5.5), 2026-11-12; updated 2026-11-14 (start/end dates). Replaces the segment setup (S1–S9), which
+> Written by Claude (Opus 5.5), 2026-11-12; updated 2026-11-14 (start/end dates, suspensions). Replaces the segment setup (S1–S9), which
 > is archived in `docs/claude/archive/initial-release/`. Read this file, then only the brief for the feature
 > you're working on.
 
@@ -100,11 +100,11 @@ bot/ (discord)   scheduler/ (no discord)   [web/ later]
 | `cli.py`, `config.py`, `logging.py`, `health.py` | CLI (`sidequest`, `migrate`, `healthcheck`), settings, logging, heartbeat watchdog |
 | `core/` | `clock` (`Clock` protocol, `SystemClock`), `timeparse`, `tz`, `recurrence` (rules, `next_occurrence`, `describe`, `anchored`), `discord_time`, `enums`, `errors`, `limits`, `text` (`bold()` for service messages) |
 | `db/` | `base`, `models` (full schema), `session`, `migrate` |
-| `services/` | `todos`, `occurrences` (check-off, upcoming, scheduler API), `undo`, `subtasks`, `lists`, `settings`, `permissions`, `retention`, `meta`; plumbing: `uow`, `actor`, `dto`, `effects`, `model` (`StrictModel`), `_common` (shared helpers), `_series` (last occurrence, D75 check) |
+| `services/` | `todos`, `occurrences` (check-off, upcoming, scheduler API), `undo`, `subtasks`, `suspensions`, `lists`, `settings`, `permissions`, `retention`, `meta`; plumbing: `uow`, `actor`, `dto`, `effects`, `model` (`StrictModel`), `_common` (shared helpers), `_series` (last occurrence, D75 check, suspension views) |
 | `scheduler/` | `loop` (`Scheduler`), `notifier` (Protocol), `signal` (`ScheduleSignal`), `retention` |
 | `bot/` | `client`, `adapter` (glue: `actor_from`, `uows`, `apply`, `reply`, `defer`, …), `render` (all embeds/text, no I/O), `options` (option → rule/patch parsing), `autocomplete`, `errors`, `notifier` (`DiscordNotifier`) |
-| `bot/commands/` | `todo` (+ `todo_edit`, `todo_list`, `todo_manage`, `todo_view`), `repeat`, `subtask`, `lists`, `settings`, `admin`, `about`, `common` |
-| `bot/views/` | `base` (`BaseView`/`BaseModal`, 5-min, owner-only), `reminder` (persistent Done + subtask selects), `show`, `upcoming`, `listing`, `assign`, `confirm` (+ check-off confirm), `undo`, `list_delete`, `collaborators`, `modals` |
+| `bot/commands/` | `todo` (+ `todo_edit`, `todo_list`, `todo_manage`, `todo_view`, `todo_suspend`), `repeat`, `subtask`, `lists`, `settings`, `admin`, `about`, `common` |
+| `bot/views/` | `base` (`BaseView`/`BaseModal`, 5-min, owner-only), `reminder` (persistent Done + subtask selects), `show`, `upcoming`, `listing`, `assign`, `confirm` (+ check-off confirm), `suspend`, `undo`, `list_delete`, `collaborators`, `modals` |
 | `migrations/versions/` | `0001`–`0003`. New: `alembic revision --rev-id 0004 -m "..."` |
 | `tests/` | `unit/`, `integration/` (real Postgres), `support/` (`FixedClock`, `FakeNotifier`) |
 
@@ -190,6 +190,26 @@ them. `next_occurrence` returns None once the series is over. The description en
 ", from DD-MM-YYYY" (while `start` is ahead) and ", until DD-MM-YYYY"; plain dates are `DD-MM-YYYY`
 (`core.text.plain_date`), not timestamps.
 
+### Suspensions (D81–D89, `services/suspensions.py`)
+- A repeating to-do can be suspended between two dates (inclusive, its zone): no reminder fires
+  on those days, then it carries on. Stored in the rule JSON as `"suspended": [{"start", "end"}]`
+  (sorted, never overlapping, touching is fine, left out when empty); finished ones are dropped
+  whenever the rule is written (`recurrence.pruned`, also in `anchored`). Rule edits and zone
+  changes keep them as the same local dates. At most 10 current/upcoming (`SUSPENSIONS_MAX`).
+- `/todo suspend todo [start] [end]`: only `start` → that day, only `end` → today until `end`,
+  both → the range; `start` ≥ today, `end` ≤ a year ahead, weekday names work. It always
+  confirms: "Are you sure you want to suspend **title** from DD-MM-YYYY to DD-MM-YYYY. The
+  following N occurrence(s) will be skipped:", one line per reminder (`<t:…:f> (<t:…:R>)`),
+  20 per page with ◀ Prev / Next ▶ (`SUSPENSION_PAGE_SIZE`), then **Suspend** / **Cancel**; the
+  service checks everything again. Refused: nothing to skip,
+  overlap, skipping every remaining reminder of a to-do with an `end` while none is up, > 10.
+- Reminders already sent (also one that is up) aren't affected. Suspend and unsuspend replace
+  the pending occurrence like an edit (so an earlier check-off can no longer be undone); the
+  next one comes after the latest fired or checked-off occurrence, never before now.
+- `/todo unsuspend todo suspension` (autocomplete from `TodoView.suspensions`, value = ISO
+  start date), no confirm. Same rights as editing. `/todo show` has a "Suspended" field,
+  `/todo list` shows "⏸️ until DD-MM-YYYY" while one runs (`TodoView.suspended_until`).
+
 ### Occurrences and reminders
 - `occurrences` are concrete reminder instances. Status flow: `pending` → `sent` → `done` / `missed`;
   `pending` → `done` (checked off early) or `cancelled` (edited/deleted); `sent` → `failed`.
@@ -224,7 +244,8 @@ them. `next_occurrence` returns None once the series is over. The description en
   `Scheduler.deliver`). Refused when the follow-up is no longer pending (sent → "already went out",
   done → "undo the later check-off first", cancelled by an edit → "changed"), or on a title clash.
 - Checking off a pending occurrence early (`/todo upcoming`, `/todo done`) means that reminder never
-  posts; for repeating to-dos the one after it is scheduled.
+  posts; for repeating to-dos the one after it is scheduled. Edits, suspend and unsuspend
+  continue after it too (`_series.schedule_base`), so it doesn't come back.
 - A new occurrence firing while the previous reminder is unchecked deletes it and marks it `missed`.
   After downtime: at most one catch-up reminder per to-do, marked late ("Late — was due …", > 2 min).
 
@@ -296,6 +317,15 @@ and are added here and in the feature's brief.
 | D78 | The last check-off marks the to-do done (history, off the lists); its name is free at once. |
 | D79 | Undo of the last check-off reopens the to-do; refused when an open to-do has taken the name. |
 | D80 | Descriptions end with ", from DD-MM-YYYY" (while ahead) and ", until DD-MM-YYYY"; "Next (last): …", "Last reminder — nothing after this one", "🔁 last: …". |
+| D81 | Repeating to-dos can be suspended between two dates (inclusive); several, never overlapping (touching is fine), ≤ 10 current/upcoming. |
+| D82 | `/todo suspend todo [start] [end]`: only `start` = that day, only `end` = from now, both = the range; `start` ≥ today, `end` ≥ `start`, `end` ≤ a year ahead; weekday names (today counts). |
+| D83 | Reminders that already fired (also one that is up) aren't affected; only ones still to come are skipped. |
+| D84 | Always confirm ("Are you sure you want to suspend **title** from … to …. The following N occurrence(s) will be skipped:"), listing every skipped reminder with its relative time, 20 per page with Prev/Next; **Suspend** / **Cancel**; re-checked on Suspend. |
+| D85 | Refused: nothing to skip, overlap, skipping every remaining reminder of a to-do with an `end` while none is up, more than 10. |
+| D86 | `/todo unsuspend todo suspension` (autocomplete, no confirm); skipped reminders don't come back. |
+| D87 | `/todo show` "Suspended" field; `short_when` "⏸️ until DD-MM-YYYY" while one runs. |
+| D88 | Stored in the rule JSON (`suspended`, no migration); finished ones dropped when the rule is written; kept as local dates on edits. |
+| D89 | Same rights as editing; suspend/unsuspend replace the pending occurrence (an earlier check-off can't be undone after it). |
 
 **Out of scope for now:** web frontend · snooze · role assignees · every N days / N months ·
 date-only to-dos · per-server default timezone · localisation · digests.

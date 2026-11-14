@@ -4,7 +4,14 @@ import discord
 from discord import app_commands
 
 from sidequest.bot import adapter, autocomplete
-from sidequest.bot.commands import common, todo_edit, todo_list, todo_manage, todo_view
+from sidequest.bot.commands import (
+    common,
+    todo_edit,
+    todo_list,
+    todo_manage,
+    todo_suspend,
+    todo_view,
+)
 from sidequest.bot.commands.common import CREATE_DESCRIPTIONS, Title
 from sidequest.bot.commands.repeat import build_repeat_group
 from sidequest.bot.commands.subtask import build_subtask_group
@@ -30,6 +37,7 @@ def build_todo_group() -> app_commands.Group:
         todo_view.show_command(),
         *todo_manage.commands(),
         todo_edit.edit_command(),
+        *todo_suspend.commands(),
     ):
         group.add_command(command)
     group.add_command(build_repeat_group())

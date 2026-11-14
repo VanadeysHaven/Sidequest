@@ -73,3 +73,27 @@ async def subtask(interaction: discord.Interaction, current: str) -> Choices:
         for number, sub in enumerate(view.subtasks, start=1)
         if query in sub.title.lower()
     ][:25]
+
+
+async def suspension(interaction: discord.Interaction, current: str) -> Choices:
+    """Current and upcoming suspensions of the to-do chosen in the `todo` option (D86);
+    value = the suspension's start date (YYYY-MM-DD)."""
+    raw = getattr(interaction.namespace, "todo", None)
+    if not isinstance(raw, str) or not raw.strip().isdigit():
+        return []
+    query = current.strip().lower()
+    try:
+        actor = actor_from(interaction)
+        async with uows(interaction)() as uow:
+            view = await todos.get(uow, actor, int(raw))
+    except SidequestError:
+        return []
+    except Exception:
+        log.exception("Suspension autocomplete failed")
+        return []
+    labels = [(render.suspension_label(s), s.start.isoformat()) for s in view.suspensions]
+    return [
+        app_commands.Choice(name=label, value=value)
+        for label, value in labels
+        if query in label.lower()
+    ][:25]

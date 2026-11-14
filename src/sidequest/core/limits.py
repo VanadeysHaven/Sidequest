@@ -14,7 +14,13 @@ TIMES_PER_RULE_MAX = 12
 WEEK_INTERVAL_MAX = 52
 """`every` on a weekly rule: 1–52 weeks."""
 START_AHEAD_MAX_DAYS = 366
-"""How far ahead a weekly rule's `start` may be, checked when it is set."""
+"""How far ahead a rule's `start` (and a suspension's end, D82) may be, checked when set."""
+
+# Suspensions (D81, D84).
+SUSPENSIONS_MAX = 10
+"""Current and upcoming suspensions per to-do."""
+SUSPENSION_PAGE_SIZE = 20
+"""Skipped reminders per page of the suspend confirmation."""
 
 # Server lists (S8).
 LIST_NAME_MAX = 50

@@ -1,13 +1,38 @@
-"""Repeating to-dos that run out (D73–D78): the last occurrence and the "anything left?" check."""
+"""Repeating to-dos that run out (D73–D78): the last occurrence and the "anything left?" check.
+Where a rescheduled series continues (`schedule_base`), and the suspensions a view shows (D87)."""
 
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import func, select
+
 from sidequest.core import recurrence
+from sidequest.core.enums import OccurrenceStatus
 from sidequest.core.errors import InvalidRule
 from sidequest.core.recurrence import RecurrenceRule
 from sidequest.core.text import bold, plain_date
 from sidequest.db.models import Occurrence
+from sidequest.services.dto import SuspensionView
+from sidequest.services.uow import Uow
+
+_FIRED_OR_DONE = (
+    OccurrenceStatus.SENT,
+    OccurrenceStatus.DONE,
+    OccurrenceStatus.MISSED,
+    OccurrenceStatus.FAILED,
+)
+
+
+async def schedule_base(uow: Uow, todo_id: int, now: datetime) -> datetime:
+    """Where a rescheduled repeating to-do continues (edit, suspend, unsuspend): its next
+    reminder comes strictly after this. Now, or later when a reminder still to come was
+    already checked off early, so that one doesn't come back."""
+    latest = await uow.session.scalar(
+        select(func.max(Occurrence.due_at)).where(
+            Occurrence.todo_id == todo_id, Occurrence.status.in_(_FIRED_OR_DONE)
+        )
+    )
+    return max(now, latest) if latest is not None else now
 
 
 def final_occurrence(
@@ -46,3 +71,13 @@ def require_upcoming(title: str, rule: RecurrenceRule, tz: ZoneInfo, now: dateti
     """D75: a new or changed rule needs at least one occurrence after `now`."""
     if is_over(rule, tz, now):
         raise nothing_between(title, rule, tz, now)
+
+
+def suspension_view(rng: recurrence.DateRange, today: date) -> SuspensionView:
+    return SuspensionView(start=rng.start, end=rng.end, running=rng.start <= today)
+
+
+def suspension_views(rule: RecurrenceRule, today: date) -> tuple[SuspensionView, ...]:
+    """Current and upcoming suspensions (D87); finished ones may linger in the stored rule
+    until it is written again (D88)."""
+    return tuple(suspension_view(r, today) for r in recurrence.pruned(rule, today).suspended)

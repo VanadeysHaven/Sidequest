@@ -4,6 +4,7 @@ No I/O here, so S6 (reminders) can reuse it and tests can check the output direc
 Points in time only via `core.discord_time` (C5). User text is escaped.
 """
 
+import math
 from collections.abc import Sequence
 
 import discord
@@ -15,13 +16,18 @@ from sidequest.core.limits import (
     EMBEDS_TOTAL_MAX,
     SELECT_LABEL_MAX,
     SELECT_OPTIONS_MAX,
+    SUSPENSION_PAGE_SIZE,
 )
+from sidequest.core.text import plain_date
 from sidequest.services.dto import (
     ListFilter,
     ListView,
     OccurrenceView,
     Page,
     SubtaskView,
+    SuspensionChange,
+    SuspensionPreview,
+    SuspensionView,
     TodoView,
     UpcomingItem,
 )
@@ -70,31 +76,41 @@ def _last_is_up(todo: TodoView) -> bool:
     )
 
 
+def next_line(todo: TodoView) -> str:
+    """A repeating to-do's next reminder ("Next (last)" for the final one, D80)."""
+    if todo.next_due_at is not None:
+        label = "Next (last)" if _next_is_last(todo) else "Next"
+        return f"{label}: {ts_due(todo.next_due_at)}"
+    if _last_is_up(todo):
+        return LAST_UP
+    return "Next: nothing scheduled"
+
+
 def when(todo: TodoView) -> str:
-    """Due time, repeat rule + next occurrence ("Next (last)" for the final one, D80), or
-    "No reminder"."""
+    """Due time, repeat rule + next occurrence, or "No reminder"."""
     if todo.kind == TodoKind.RECURRING:
-        if todo.next_due_at is not None:
-            label = "Next (last)" if _next_is_last(todo) else "Next"
-            return f"{todo.rule_description}\n{label}: {ts_due(todo.next_due_at)}"
-        if _last_is_up(todo):
-            return f"{todo.rule_description}\n{LAST_UP}"
-        return f"{todo.rule_description}\nNext: nothing scheduled"
+        return f"{todo.rule_description}\n{next_line(todo)}"
     if todo.due_at is not None:
         return f"Due {ts_due(todo.due_at)}"
     return "No reminder (untimed)"
 
 
+def _short_next(todo: TodoView) -> str:
+    if todo.next_due_at is not None:
+        last = "last: " if _next_is_last(todo) else ""
+        return f"🔁 {last}{ts(todo.next_due_at, 'f')} ({ts(todo.next_due_at, 'R')})"
+    if _last_is_up(todo) and todo.reminder is not None:
+        due = todo.reminder.due_at
+        return f"🔁 last: {ts(due, 'f')} ({ts(due, 'R')})"
+    return "🔁 nothing scheduled"
+
+
 def short_when(todo: TodoView) -> str:
-    """One-line timing for list rows."""
+    """One-line timing for list rows; "⏸️ until …" while a suspension runs (D87)."""
     if todo.kind == TodoKind.RECURRING:
-        if todo.next_due_at is not None:
-            last = "last: " if _next_is_last(todo) else ""
-            return f"🔁 {last}{ts(todo.next_due_at, 'f')} ({ts(todo.next_due_at, 'R')})"
-        if _last_is_up(todo) and todo.reminder is not None:
-            due = todo.reminder.due_at
-            return f"🔁 last: {ts(due, 'f')} ({ts(due, 'R')})"
-        return "🔁 nothing scheduled"
+        if todo.suspended_until is not None:
+            return f"{_short_next(todo)} · ⏸️ until {plain_date(todo.suspended_until)}"
+        return _short_next(todo)
     if todo.due_at is not None:
         return f"{ts(todo.due_at, 'f')} ({ts(todo.due_at, 'R')})"
     return "no reminder"
@@ -146,6 +162,72 @@ def undone_text(todo: TodoView, channel_id: int | None = None) -> str:
     if channel_id is not None:
         text += f" The reminder is back in <#{channel_id}>."
     return text
+
+
+# --- suspensions (D84–D87) ---------------------------------------------------------------
+
+
+def suspension_label(suspension: SuspensionView) -> str:
+    """ "16-11-2026 – 22-11-2026", "today – 22-11-2026" (running), one day: "16-11-2026"."""
+    first = "today" if suspension.running else plain_date(suspension.start)
+    if suspension.start == suspension.end:
+        return first
+    return f"{first} – {plain_date(suspension.end)}"
+
+
+def _span(suspension: SuspensionView) -> str:
+    """ "from 16-11-2026 to 22-11-2026", "from today to …"; one day: "for 16-11-2026"."""
+    first = "today" if suspension.running else plain_date(suspension.start)
+    if suspension.start == suspension.end:
+        return f"for {first}"
+    return f"from {first} to {plain_date(suspension.end)}"
+
+
+def suspend_preview_pages(preview: SuspensionPreview) -> int:
+    return max(1, math.ceil(preview.total / SUSPENSION_PAGE_SIZE))
+
+
+def suspend_preview_text(preview: SuspensionPreview, page: int = 0) -> str:
+    """The confirmation of `/todo suspend` (D84, wording by Tim): the reminders it skips,
+    oldest first with their relative time, `SUSPENSION_PAGE_SIZE` per page (0-based `page`,
+    clamped), with "Page N/M" when there is more than one."""
+    pages = suspend_preview_pages(preview)
+    page = min(max(page, 0), pages - 1)
+    first = page * SUSPENSION_PAGE_SIZE
+    shown = preview.skipped[first : first + SUSPENSION_PAGE_SIZE]
+    rng = preview.suspension
+    noun = "occurrence" if preview.total == 1 else "occurrences"
+    lines = [
+        f"Are you sure you want to suspend **{esc(preview.title)}** from "
+        f"{plain_date(rng.start)} to {plain_date(rng.end)}. "
+        f"The following {preview.total} {noun} will be skipped:",
+        *(f"• {ts(at, 'f')} ({ts(at, 'R')})" for at in shown),
+    ]
+    if pages > 1:
+        lines.append(f"Page {page + 1}/{pages}")
+    return "\n".join(lines)
+
+
+def suspended_text(change: SuspensionChange) -> str:
+    """After Suspend (D84)."""
+    todo = change.todo
+    return f"⏸️ **{esc(todo.title)}** is suspended {_span(change.suspension)}. {next_line(todo)}"
+
+
+def unsuspended_text(change: SuspensionChange) -> str:
+    """After `/todo unsuspend` (D86)."""
+    todo = change.todo
+    return (
+        f"▶️ Suspension of **{esc(todo.title)}** {_span(change.suspension)} cancelled. "
+        f"{next_line(todo)}"
+    )
+
+
+def suspensions_field(todo: TodoView) -> str | None:
+    """The "Suspended" field of `/todo show` (D87): current and upcoming ones."""
+    if not todo.suspensions:
+        return None
+    return "\n".join(suspension_label(s) for s in todo.suspensions)
 
 
 def and_join(parts: Sequence[str]) -> str:
@@ -230,6 +312,9 @@ def todo_embed(todo: TodoView) -> discord.Embed:
         ),
     )
     embed.add_field(name="When", value=when(todo), inline=False)
+    suspended = suspensions_field(todo)
+    if suspended is not None:
+        embed.add_field(name="Suspended", value=suspended, inline=False)
     if todo.reminder is not None and todo.reminder.sent_at is not None:
         embed.add_field(
             name="Reminder",

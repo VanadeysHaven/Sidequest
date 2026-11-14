@@ -1,6 +1,6 @@
 # Brief — Weekday dates, suspensions, per-day times, start and end dates
 
-**Status:** in progress (Segments 1–2 done; Segments 3–4 ready) · **Branch:** `claude/dates-and-schedules` · **Migration:** none (all new data lives in
+**Status:** in progress (Segments 1–3 done; Segment 4 ready) · **Branch:** `claude/dates-and-schedules` · **Migration:** none (all new data lives in
 the rule JSON) · Written by Claude (Opus 5.5), 2026-11-14.
 
 Four features, one segment each, **numbered in build order**: run Segment 1, 2, 3, 4, one per session.
@@ -155,7 +155,7 @@ Example (today Sat 14-11-2026): `monday` → 16-11-2026. On Monday 16-11 at 14:0
 | D81 | **Suspensions.** A repeating to-do can be suspended between two dates, inclusive, in its zone: no reminder fires on those days; it carries on with the first occurrence after the end day. Repeating to-dos only. Several per to-do, **never overlapping** (touching is fine), at most 10 current/upcoming (`SUSPENSIONS_MAX`). | Tim |
 | D82 | **`/todo suspend todo [start] [end]`**, at least one date. Only `start` → just that day. Only `end` → from now until `end`. Both → that range. `start` ≥ today, `end` ≥ `start`, `end` at most a year ahead. Weekday names work (today counts, D71). | Tim (forms), Claude (limits) |
 | D83 | **What "now" covers.** Reminders that have already fired, including one that is up right now, are not affected: it stays and can be checked off. Only reminders still to come are skipped. | Claude |
-| D84 | **Always confirm.** The reply lists every reminder that would be skipped (`<t:…:f>`, oldest first, within the to-do's `end`): up to 20 lines, then "…and N more (M in total)". Buttons **Suspend** / **Cancel** (5 minutes). The service re-checks everything on Suspend. Reply: "⏸️ **title** is suspended from DD-MM-YYYY to DD-MM-YYYY. Next: <ts>". | Tim (confirm with list), Claude (cap, wording) |
+| D84 | **Always confirm.** ~~The reply lists every reminder that would be skipped (`<t:…:f>`, oldest first, within the to-do's `end`): up to 20 lines, then "…and N more (M in total)".~~ **Changed by Tim (2026-11-14, after the build):** "Are you sure you want to suspend **title** from DD-MM-YYYY to DD-MM-YYYY. The following N occurrence(s) will be skipped:", then every skipped reminder as `<t:…:f> (<t:…:R>)`, oldest first, 20 per page with ◀ Prev / Next ▶ and "Page N/M". Buttons **Suspend** / **Cancel** (5 minutes). The service re-checks everything on Suspend. Reply: "⏸️ **title** is suspended from DD-MM-YYYY to DD-MM-YYYY. Next: <ts>". | Tim (confirm with list), Claude (cap, wording) |
 | D85 | **Refused** (before the confirm, and again on Suspend): nothing to skip ("No reminder of **title** falls between …"); overlap ("That overlaps the suspension from DD-MM-YYYY to DD-MM-YYYY. Cancel that one first, or pick other dates."); it would skip every remaining reminder of a to-do with an `end` while none is up ("That would skip every remaining reminder. Change the end date or delete the to-do instead."); more than 10. | Claude |
 | D86 | **Cancel with `/todo unsuspend todo suspension`**; `suspension` autocompletes that to-do's current and upcoming suspensions ("16-11-2026 – 22-11-2026", "today – 22-11-2026"), like `/todo subtask remove`. No confirm (adding it again is easy). Reminders skipped earlier don't come back; the next one is the first still to come. Reply: "▶️ Suspension from … to … cancelled. Next: <ts>". | Tim (cancellable), Claude (command) |
 | D87 | **Display.** `/todo show` gets a "Suspended" field with current and upcoming suspensions. `short_when` adds "⏸️ until DD-MM-YYYY" while one is running. `Next:` already skips them. | Claude |
@@ -179,24 +179,25 @@ Example (today Sat 14-11-2026): `monday` → 16-11-2026. On Monday 16-11 at 14:0
   Wire the second command after the first — **Haiku** may do `unsuspend` + autocomplete from the pattern.
 
 ### Checklist
-1. [ ] Core — main session. 2. [ ] Core tests — **Haiku**: skipping days, touching vs overlapping,
+1. [x] Core — main session. 2. [x] Core tests — **Haiku**: skipping days, touching vs overlapping,
    pruning, JSON round-trip, `next_occurrence` across a suspension, with `end`.
-3. [ ] Services — main session. 4. [ ] Service tests — **Haiku**: the three D82 forms (incl. "only end" on
+3. [x] Services — main session. 4. [x] Service tests — **Haiku**: the three D82 forms (incl. "only end" on
    a day whose earlier reminder already fired); preview count and cap; each D85 refusal; reminder up stays
    (D83); unsuspend reschedules earlier; undo after suspend refused as changed; one-time to-do refused;
    permissions.
-5. [ ] Bot — main session + **Haiku**. 6. [ ] Render tests — **Haiku**: preview text with 0/3/25 entries,
+5. [x] Bot — main session. 6. [x] Render tests — **Haiku**: preview text with 0/3/25 entries,
    the Suspended field, `short_when` marker.
-7. [ ] Docs — Opus: `CLAUDE.md` §4 (new subsection), §6 D81–D89; README. 8. [ ] Checks. Handoff.
+7. [x] Docs — Opus: `CLAUDE.md` §4 (new subsection), §6 D81–D89; README. 8. [x] Checks. Handoff.
 
 ### Manual test (Tim)
-- [ ] `/todo suspend todo:<daily> start:monday end:wednesday` → list of the skipped reminders → Suspend →
+- [x] `/todo suspend todo:<daily> start:monday end:wednesday` → list of the skipped reminders → Suspend →
       nothing fires Mon–Wed, Thursday does.
-- [ ] `start` only → only that day; `end` only → from now.
-- [ ] A long range on a daily with several times → 20 lines + "…and N more".
-- [ ] Overlapping second suspension refused; touching one accepted.
-- [ ] `/todo unsuspend` autocompletes both; cancel one → Next moves earlier.
-- [ ] `/todo show` lists them; `/todo list` shows ⏸️ while one runs.
+- [x] `start` only → only that day; `end` only → from now.
+- [x] A long range on a daily with several times → 20 lines with relative times,
+      "Page 1/N", ◀ Prev / Next ▶ page through all of them.
+- [x] Overlapping second suspension refused; touching one accepted.
+- [x] `/todo unsuspend` autocompletes both; cancel one → Next moves earlier.
+- [x] `/todo show` lists them; `/todo list` shows ⏸️ while one runs.
 
 ---
 
@@ -306,3 +307,41 @@ Numbered by Tim's original feature order.
 - **Open questions:** none. (An `end` earlier than the reminder that's up is accepted and that
   reminder becomes the last: kept, Tim 2026-11-14.)
 - **Manual tests:** all passed on the dev bot (Tim, 2026-11-14).
+
+### Segment 3 — 2026-11-14
+- **Built:** `recurrence.DateRange` and `suspended` on every rule (sorted, no overlap, JSON key
+  only when set); `_matches` skips suspended days; `pruned` (also run by `anchored`),
+  `with_suspension`, `without_suspension`, `suspended_until`. New `services/suspensions.py`
+  (`preview`, `suspend`, `unsuspend`); `TodoView.suspensions` / `suspended_until`
+  (`_series.suspension_views`). Bot: `commands/todo_suspend.py` (`/todo suspend`,
+  `/todo unsuspend`), `views/suspend.py` (`SuspendConfirmView`), `autocomplete.suspension`,
+  render `suspension_label`, `suspend_preview_text`, `suspended_text`, `unsuspended_text`, the
+  "Suspended" field and the `short_when` marker; `render.next_line` shared by `when`.
+  Limits `SUSPENSIONS_MAX`, `SUSPENSION_PAGE_SIZE`. After Tim's review: the confirmation uses
+  his wording, shows relative times and pages through every skipped reminder (the preview
+  returns all of them; `SuspendConfirmView` has ◀ Prev / Next ▶, re-rendering only).
+- **Bug fix (Tim asked for it during the session):** `/todo edit` of a repeating to-do whose next
+  reminder had been checked off early brought that reminder back (the new pending one was picked
+  from now). New `_series.schedule_base`: the series continues after the latest sent or
+  checked-off occurrence, never before now; used by `_retime_recurring`, suspend and unsuspend.
+  Test: `tests/integration/test_services_edit_after_early.py`.
+- **Tests:** `test_recurrence_suspended.py` (83), `test_services_suspensions.py` (37,
+  integration), `test_render_suspensions.py` (31), `test_services_edit_after_early.py` (3).
+- **Checks:** ruff check/format clean; full `pytest` with the test Postgres: 969 passed. No model
+  change, so no `alembic check`.
+- **Deviations:**
+  - No `suspensions.current()` service: the autocomplete reads `todos.get(...).suspensions`, like
+    the subtask autocomplete. `suspend`/`unsuspend` return `SuspensionChange(todo, suspension)`
+    instead of a bare `TodoView` (the replies need the range).
+  - Wording: in the replies after Suspend / unsuspend a one-day suspension says "for
+    16-11-2026" and one that has started says "today"; the unsuspend reply names the to-do
+    ("▶️ Suspension of **title** from … to … cancelled."). The confirmation always shows both
+    dates, as in Tim's wording, with "occurrence" / "occurrences" by count.
+  - `start` before today: "A suspension can't start before today."
+  - `bot/render.py` is now ~465 lines and `services/_common.py` 416 (over the ~400 guideline);
+    the suspension text could move to its own render module later.
+- **Open questions:**
+  - With the edit fix, checking off tonight's 20:00 early and then changing the times to
+    `20:00, 22:00` still schedules tonight's 22:00 (only occurrences up to the checked-off one are
+    skipped). Should an early check-off cover the rest of that day instead?
+- **Manual tests:** all passed on the dev bot, incl. the edit fix (Tim, 2026-11-14).

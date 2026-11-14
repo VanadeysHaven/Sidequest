@@ -16,9 +16,15 @@ D73/D74): nothing fires before `start` or after `end`. With `every` ≥ 2 the we
 (Monday–Sunday) of `start` is the first on-week. A rule with `every` ≥ 2 must be anchored
 (have a `start`, see `anchored`) before it is stored or scheduled. A rule with an `end`
 runs out: `next_occurrence` returns None after its last occurrence (D76).
+
+Every rule may also be suspended between dates (D81, D88): `"suspended": [{"start":
+"2026-11-16", "end": "2026-11-22"}]`, inclusive, sorted, never overlapping, left out when
+empty. Nothing fires on a suspended day. Finished ones are dropped when the rule is written
+(`pruned`, via `anchored`).
 """
 
 import calendar
+import itertools
 import re
 from datetime import date, datetime, time, timedelta
 from typing import Annotated, Any, Literal, Self
@@ -43,7 +49,8 @@ from sidequest.core.text import plain_date
 from sidequest.core.timeparse import parse_time, resolve_local
 
 # Every valid rule fires within 52 weeks of the later of the search start and its `start`
-# date (weekly rules repeat at most every 52 weeks); this only guards against bugs.
+# date (weekly rules repeat at most every 52 weeks), plus at most one skipped by a
+# suspension (they end at most a year ahead, D82); this only guards against bugs.
 MAX_SEARCH_DAYS = 800
 
 _ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -128,22 +135,57 @@ RuleDate = Annotated[date, BeforeValidator(_to_date)]
 END_BEFORE_START = "The end date can't be before the start date."
 
 
-# --- rules -------------------------------------------------------------------------------
-
-
-class _Rule(BaseModel):
-    """Every rule may have a `start` and an `end` date, both inclusive (D73/D74)."""
-
+class _Frozen(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-
-    start: RuleDate | None = None
-    end: RuleDate | None = None
 
     def __init__(self, **data: Any) -> None:
         try:
             super().__init__(**data)
         except ValidationError as e:
             raise InvalidRule(_error_message(e)) from None
+
+
+class DateRange(_Frozen):
+    """Two dates, both inclusive, in the to-do's zone: a suspension (D81, D88)."""
+
+    start: RuleDate
+    end: RuleDate
+
+    @model_validator(mode="after")
+    def _end_after_start(self) -> Self:
+        if self.end < self.start:
+            raise ValueError(END_BEFORE_START)
+        return self
+
+    def overlaps(self, other: "DateRange") -> bool:
+        """Sharing a day; touching ranges (one ends the day before the other starts) don't."""
+        return self.start <= other.end and other.start <= self.end
+
+    def __contains__(self, d: date) -> bool:
+        return self.start <= d <= self.end
+
+
+def _check_suspended(ranges: tuple[DateRange, ...]) -> tuple[DateRange, ...]:
+    ordered = tuple(sorted(ranges, key=lambda r: r.start))
+    for before, after in itertools.pairwise(ordered):
+        if before.overlaps(after):
+            raise ValueError("suspensions overlap")
+    return ordered
+
+
+Suspended = Annotated[tuple[DateRange, ...], AfterValidator(_check_suspended)]
+
+
+# --- rules -------------------------------------------------------------------------------
+
+
+class _Rule(_Frozen):
+    """Every rule may have a `start` and an `end` date, both inclusive (D73/D74), and
+    suspensions: date ranges without reminders, sorted, never overlapping (D81, D88)."""
+
+    start: RuleDate | None = None
+    end: RuleDate | None = None
+    suspended: Suspended = ()
 
     @model_validator(mode="after")
     def _end_after_start(self) -> Self:
@@ -229,6 +271,8 @@ def to_json(rule: RecurrenceRule) -> dict[str, Any]:
         exclude.add("start")
     if rule.end is None:
         exclude.add("end")
+    if not rule.suspended:
+        exclude.add("suspended")
     return rule.model_dump(mode="json", exclude=exclude)
 
 
@@ -244,6 +288,7 @@ def anchored(rule: RecurrenceRule, tz: ZoneInfo, now: datetime) -> RecurrenceRul
     if now.tzinfo is None:
         raise ValueError("naive datetime; use timezone-aware UTC")
     today = now.astimezone(tz).date()
+    rule = pruned(rule, today)
     if rule.start is not None:
         if rule.start > today + timedelta(days=START_AHEAD_MAX_DAYS):
             raise InvalidRule("`start` can be at most a year ahead.")
@@ -252,6 +297,50 @@ def anchored(rule: RecurrenceRule, tz: ZoneInfo, now: datetime) -> RecurrenceRul
         return rule
     first = next_occurrence(rule.model_copy(update={"every": 1}), tz, now)
     return rule.model_copy(update={"start": first.astimezone(tz).date() if first else today})
+
+
+# --- suspensions (D81–D88) ---------------------------------------------------------------
+
+
+def pruned[R: RecurrenceRule](rule: R, today: date) -> R:
+    """`rule` without the suspensions that are over (`end` before `today`, D88)."""
+    current = tuple(r for r in rule.suspended if r.end >= today)
+    if len(current) == len(rule.suspended):
+        return rule
+    return rule.model_copy(update={"suspended": current})
+
+
+def with_suspension[R: RecurrenceRule](rule: R, rng: DateRange) -> R:
+    """`rule` with one more suspension. `InvalidRule` when it overlaps one (D81, D85)."""
+    for other in rule.suspended:
+        if other.overlaps(rng):
+            raise InvalidRule(
+                f"That overlaps the suspension from {plain_date(other.start)} to "
+                f"{plain_date(other.end)}. Cancel that one first, or pick other dates."
+            )
+    return type(rule)(**{**rule.model_dump(), "suspended": (*rule.suspended, rng)})
+
+
+def without_suspension[R: RecurrenceRule](rule: R, start: date) -> tuple[R, DateRange | None]:
+    """`rule` without the suspension starting on `start`, and that suspension (None, and
+    the rule unchanged, when there is none)."""
+    found = next((r for r in rule.suspended if r.start == start), None)
+    if found is None:
+        return rule, None
+    kept = tuple(r for r in rule.suspended if r is not found)
+    return rule.model_copy(update={"suspended": kept}), found
+
+
+def suspended_until(rule: RecurrenceRule, today: date) -> date | None:
+    """While a suspension runs (today included): its last day, following touching ones."""
+    until: date | None = None
+    for rng in rule.suspended:  # sorted by start
+        if until is None:
+            if today in rng:
+                until = rng.end
+        elif rng.start == until + timedelta(days=1):
+            until = rng.end
+    return until
 
 
 # --- occurrences -------------------------------------------------------------------------
@@ -267,6 +356,8 @@ def _monday(d: date) -> date:
 
 def _matches(rule: RecurrenceRule, d: date) -> bool:
     if (rule.start is not None and d < rule.start) or (rule.end is not None and d > rule.end):
+        return False
+    if any(d in rng for rng in rule.suspended):
         return False
     match rule:
         case DailyRule():
