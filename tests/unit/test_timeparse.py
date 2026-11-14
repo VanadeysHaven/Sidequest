@@ -145,6 +145,9 @@ def test_parse_date_rejects(text: str) -> None:
             id="weekdays-keyword",
         ),
         pytest.param("weekend", [Weekday.SAT, Weekday.SUN], id="weekend-keyword"),
+        pytest.param("all", list(Weekday), id="all-keyword"),
+        pytest.param("ALL", list(Weekday), id="all-any-case"),
+        pytest.param("all,mon", list(Weekday), id="all-mixed"),
         pytest.param("thu, mon, mon", [Weekday.MON, Weekday.THU], id="dedup-and-monday-first"),
     ],
 )
@@ -368,6 +371,7 @@ def test_parse_date_weekday_is_today_on_matching_day(w: Weekday) -> None:
     [
         pytest.param("weekdays", id="weekdays-keyword"),
         pytest.param("weekend", id="weekend-keyword"),
+        pytest.param("all", id="all-keyword"),
         pytest.param("next monday", id="next-prefix"),
         pytest.param("mondy", id="typo"),
     ],
@@ -389,6 +393,7 @@ def test_parse_date_rejects_weekday_phrases(text: str) -> None:
         pytest.param("sun", True, id="sun"),
         pytest.param("weekdays", False, id="weekdays-keyword"),
         pytest.param("weekend", False, id="weekend-keyword"),
+        pytest.param("all", False, id="all-keyword"),
         pytest.param("today", False, id="today"),
         pytest.param("tomorrow", False, id="tomorrow"),
         pytest.param("2026-11-16", False, id="iso-date"),

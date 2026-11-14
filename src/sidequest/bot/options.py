@@ -5,14 +5,16 @@ from datetime import date
 from typing import Any
 
 from sidequest.core.enums import TodoKind, Weekday
-from sidequest.core.errors import InvalidOperation
+from sidequest.core.errors import InvalidOperation, InvalidRule
 from sidequest.core.recurrence import (
+    END_BEFORE_START,
     DailyRule,
     MonthlyDayRule,
     MonthlyRule,
     RecurrenceRule,
     WeeklyRule,
 )
+from sidequest.core.text import bold
 from sidequest.core.timeparse import parse_month_day, parse_times, parse_weekdays
 from sidequest.core.tz import get_zone
 from sidequest.services.dto import DueInput, TodoPatch, TodoView
@@ -70,10 +72,13 @@ def edit_patch(
     every: int | None = None,
     start: EditDate = None,
     end: EditDate = None,
+    custom_times: bool = False,
 ) -> TodoPatch:
     """`/todo edit` options → `TodoPatch`, checked against the to-do's kind and rule type.
 
     For a timed one-time to-do, a date without a time keeps its current wall-clock time.
+    `custom_times` (D95): the patch always has the (otherwise edited) rule, for the week
+    builder to replace its week on Save.
     """
     fields: dict[str, Any] = {}
     if title is not None:
@@ -89,6 +94,7 @@ def edit_patch(
         "every": every,
         "start": start,
         "end": end,
+        "custom_times": custom_times or None,
     }
     if todo.kind == TodoKind.RECURRING:
         if due is not None:
@@ -97,14 +103,14 @@ def edit_patch(
                 "Change `times` (or `days`, `week`, `weekday`, `day`) instead."
             )
         assert todo.rule is not None
-        rule = edited_rule(todo.rule, **rule_parts)  # type: ignore[arg-type]
+        rule = edited_rule(todo.rule, title=todo.title, **rule_parts)  # type: ignore[arg-type]
         if rule is not None:
             fields["rule"] = rule
     else:
         if any(value is not None for value in rule_parts.values()):
             raise InvalidOperation(
-                "`times`, `days`, `week`, `weekday`, `day`, `every`, `start` and `end` are "
-                "for repeating to-dos. "
+                "`times`, `days`, `week`, `weekday`, `day`, `every`, `start`, `end` and "
+                "`custom-times` are for repeating to-dos. "
                 "Use `date` and `time` here."
             )
         if due is not None:
@@ -140,6 +146,28 @@ def weekly_rule(days: str, times: str, every: int = 1, start: date | None = None
     )
 
 
+NEED_DAYS_AND_TIMES = "Give `days` and `times`, or set `custom-times:true` to build the week."
+PREFILL_BOTH = "To fill in the week, give both `days` and `times` (or neither)."
+
+
+def weekly_prefill(days: str | None, times: str | None, *, custom_times: bool) -> WeeklyRule | None:
+    """`/todo repeat weekly` days/times (D92): both required without `custom_times`; with it
+    both (prefill the builder) or neither (None, an empty week)."""
+    if days and times:
+        return weekly_rule(days, times)
+    if not custom_times:
+        raise InvalidOperation(NEED_DAYS_AND_TIMES)
+    if days or times:
+        raise InvalidOperation(PREFILL_BOTH)
+    return None
+
+
+def check_window(start: date | None, end: date | None) -> None:
+    """`end` before `start` is refused (as `with_window` does) before the week builder opens."""
+    if start is not None and end is not None and end < start:
+        raise InvalidRule(END_BEFORE_START)
+
+
 def with_window[R: RecurrenceRule](rule: R, start: date | None, end: date | None) -> R:
     """`rule` with the `start`/`end` options (D73), validated (`end` before `start` is
     refused)."""
@@ -158,7 +186,7 @@ _WINDOW = {"start", "end"}
 """Every rule type has them (D73)."""
 _RULE_FIELDS: dict[type, set[str]] = {
     DailyRule: {"times"} | _WINDOW,
-    WeeklyRule: {"times", "days", "every"} | _WINDOW,
+    WeeklyRule: {"times", "days", "every", "custom-times"} | _WINDOW,
     MonthlyRule: {"times", "week", "weekday"} | _WINDOW,
     MonthlyDayRule: {"times", "day"} | _WINDOW,
 }
@@ -181,12 +209,17 @@ def edited_rule(
     every: int | None = None,
     start: EditDate = None,
     end: EditDate = None,
+    custom_times: bool | None = None,
+    title: str = "This to-do",
 ) -> RecurrenceRule | None:
     """`rule` with the given parts replaced (None: nothing given). The rule type stays;
     an option that belongs to another rule type is an error (BRIEF: switching type means
     delete + re-create). A rule keeps its stored `start`/`end` unless one is given (D57);
     `CLEAR` removes it (D73). A weekly rule with `every` ≥ 2 and no `start` (cleared, or
-    going to `every` ≥ 2 without one) is left for the service to anchor (D56)."""
+    going to `every` ≥ 2 without one) is left for the service to anchor (D56).
+
+    `custom_times` (the week builder, D95) can't go with `days`/`times`; a week with
+    different times per day can only change through it (D96)."""
     given = {
         name
         for name, value in {
@@ -198,6 +231,7 @@ def edited_rule(
             "every": every,
             "start": start,
             "end": end,
+            "custom-times": custom_times or None,
         }.items()
         if value is not None
     }
@@ -209,6 +243,14 @@ def edited_rule(
         raise InvalidOperation(
             f"This to-do repeats {_KIND_NAMES[type(rule)]}, so {names} can't be changed. "
             "To switch the repeat type, delete the to-do and add it again."
+        )
+    day_options = given & {"days", "times"}
+    if day_options and "custom-times" in given:
+        raise InvalidOperation("`custom-times` can't be combined with `days` or `times`.")
+    if day_options and isinstance(rule, WeeklyRule) and rule.has_day_times:
+        raise InvalidOperation(
+            f"{bold(title)} has different times per day; "
+            "use `custom-times:true` to change its week."
         )
 
     changes: dict[str, Any] = {}

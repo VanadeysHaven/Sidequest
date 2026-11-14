@@ -1,6 +1,6 @@
 # Sidequest — what Claude Code needs to know
 
-> Written by Claude (Opus 5.5), 2026-11-12; updated 2026-11-14 (start/end dates, suspensions). Replaces the segment setup (S1–S9), which
+> Written by Claude (Opus 5.5), 2026-11-12; updated 2026-11-14 (start/end dates, suspensions, per-day times). Replaces the segment setup (S1–S9), which
 > is archived in `docs/claude/archive/initial-release/`. Read this file, then only the brief for the feature
 > you're working on.
 
@@ -102,9 +102,9 @@ bot/ (discord)   scheduler/ (no discord)   [web/ later]
 | `db/` | `base`, `models` (full schema), `session`, `migrate` |
 | `services/` | `todos`, `occurrences` (check-off, upcoming, scheduler API), `undo`, `subtasks`, `suspensions`, `lists`, `settings`, `permissions`, `retention`, `meta`; plumbing: `uow`, `actor`, `dto`, `effects`, `model` (`StrictModel`), `_common` (shared helpers), `_series` (last occurrence, D75 check, suspension views) |
 | `scheduler/` | `loop` (`Scheduler`), `notifier` (Protocol), `signal` (`ScheduleSignal`), `retention` |
-| `bot/` | `client`, `adapter` (glue: `actor_from`, `uows`, `apply`, `reply`, `defer`, …), `render` (all embeds/text, no I/O), `options` (option → rule/patch parsing), `autocomplete`, `errors`, `notifier` (`DiscordNotifier`) |
+| `bot/` | `client`, `adapter` (glue: `actor_from`, `uows`, `apply`, `reply`, `defer`, …), `render` (all embeds/text, no I/O; `render_week` for the week builder), `options` (option → rule/patch parsing), `autocomplete`, `errors`, `notifier` (`DiscordNotifier`) |
 | `bot/commands/` | `todo` (+ `todo_edit`, `todo_list`, `todo_manage`, `todo_view`, `todo_suspend`), `repeat`, `subtask`, `lists`, `settings`, `admin`, `about`, `common` |
-| `bot/views/` | `base` (`BaseView`/`BaseModal`, 5-min, owner-only), `reminder` (persistent Done + subtask selects), `show`, `upcoming`, `listing`, `assign`, `confirm` (+ check-off confirm), `suspend`, `undo`, `list_delete`, `collaborators`, `modals` |
+| `bot/views/` | `base` (`BaseView`/`BaseModal`, 5-min, owner-only), `reminder` (persistent Done + subtask selects), `show`, `upcoming`, `listing`, `assign`, `confirm` (+ check-off confirm), `suspend`, `week_builder` (+ `TimesModal`), `undo`, `list_delete`, `collaborators`, `modals` |
 | `migrations/versions/` | `0001`–`0003`. New: `alembic revision --rev-id 0004 -m "..."` |
 | `tests/` | `unit/`, `integration/` (real Postgres), `support/` (`FixedClock`, `FakeNotifier`) |
 
@@ -180,6 +180,19 @@ Daily · weekly (weekdays, `every` 1–52 weeks; weeks run Mon–Sun) · monthly
 (1st–4th, last) · monthly by day (1–31, last; missing days fall back to the month's last day). Multiple
 times per day. Times are wall-clock in the to-do's zone; a DST gap shifts forward, an ambiguous time
 fires once (first instance). Changing the rule *type* on edit is refused ("delete and add again").
+
+**Different times per weekday** (D90–D97): a weekly rule built with `day_times`
+(`{"mon": ["05:10"], "sat": ["09:00", "18:00"]}`, 1–12 times per day). When every chosen day has
+the same times it collapses to `weekdays` + `times` (old rows unchanged); otherwise the JSON has
+`day_times` instead of both, and the model has `times == ()`: use `times_for(day)` / `week`, not
+`times`. `with_week(rule, week)` keeps `every`/`start`/`end`/suspensions. The description groups
+days with equal times ("Every Monday and Thursday at 05:10, Saturday at 09:00 and 18:00 (zone)").
+The **week builder** (`views/week_builder.py`) opens with `/todo repeat weekly custom-times:true`
+(`days`+`times` optional then, both together prefill it) or `/todo edit custom-times:true` (with
+the other edit options except `days`/`times`, applied on Save). **Set times for…** (closing it
+opens the times form) / **Turn days off…** → Save (details form first with `details:true`) /
+Cancel; owner-only, 14.5-minute timeout (just under Discord's 15-minute token) → "This week editor expired; nothing was saved." `/todo edit
+days:`/`times:` on a to-do with per-day times is refused (D96).
 
 Every rule may have a `start` and an `end` date (D73–D75; inclusive, in the to-do's zone, JSON keys
 only when set): the first reminder is the first match on or after `start`, the last the last match on
@@ -326,6 +339,15 @@ and are added here and in the feature's brief.
 | D87 | `/todo show` "Suspended" field; `short_when` "⏸️ until DD-MM-YYYY" while one runs. |
 | D88 | Stored in the rule JSON (`suspended`, no migration); finished ones dropped when the rule is written; kept as local dates on edits. |
 | D89 | Same rights as editing; suspend/unsuspend replace the pending occurrence (an earlier check-off can't be undone after it). |
+| D90 | Weekly rules can have different times per weekday, 1–12 times per day. |
+| D91 | Same times on every chosen day → `weekdays` + `times` (old rows unchanged); otherwise `day_times` replaces both. The model collapses equal weeks, `times_for(day)`; `every`, `start`, `end`, `suspended` as before. |
+| D92 | `/todo repeat weekly custom-times:true` opens the week builder; `days`/`times` optional then (both together prefill it, one alone is an error); without it both are required. |
+| D93 | Builder layout: embed "Week for title" (Mon–Sun lines, footer zone/every/start/end); **Set times for…** multi-select (descriptions = times or "off"; closing it opens the times modal), **Turn days off…** multi-select, **Save**, **Cancel**; the selection resets after each change. |
+| D94 | Save needs a day with times; `details:true` → details form, then create. Cancel → "Not added." / "Nothing changed."; owner-only; times out (14.5 min, see §4) → "This week editor expired; nothing was saved." |
+| D95 | `/todo edit todo custom-times:true` opens the builder with the current week; other edit options except `days`/`times` are applied together on Save; other rule types get the usual type error. |
+| D96 | `/todo edit days:`/`times:` on a to-do with per-day times is refused ("… use `custom-times:true` to change its week."). |
+| D97 | Descriptions group days with equal times in weekday order, plus the D80 suffixes. |
+| D98 | `days` accepts `all` (Mon–Sun) next to `weekdays` / `weekend`; not a date word. |
 
 **Out of scope for now:** web frontend · snooze · role assignees · every N days / N months ·
 date-only to-dos · per-server default timezone · localisation · digests.

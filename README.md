@@ -16,7 +16,9 @@ ping the assignees. Sidequest only works in servers (no DMs).
   written as `2026-11-16`, `16-11-2026`, `today`, `tomorrow` or a weekday (`monday`).
 - **Repeating to-dos:** daily, weekly (several days, optionally every 2–52 weeks), monthly on
   a weekday ("first Sunday") or on a day of the month ("the 15th", "last day"), each with one
-  or more times. Each can have a start and an end date; after the last reminder is checked
+  or more times. A weekly to-do can have different times per day (Monday 05:10, Saturday
+  09:00 and 18:00): `custom-times:true` opens a week builder where you pick days and set
+  their times. Each can have a start and an end date; after the last reminder is checked
   off, the to-do is done. Repeating to-dos can be **suspended** for a few days (a holiday,
   say): no reminders between two dates, then they carry on.
 - **Subtasks** (up to 50 per to-do) and long multi-line **details**.

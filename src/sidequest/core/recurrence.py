@@ -7,6 +7,7 @@ so they stay at the same local time across DST (BRIEF §4.3). JSON shape (S2):
     {"type": "weekly",      "weekdays": ["mon", "thu"], "times": ["12:00"]}
     {"type": "weekly",      "weekdays": ["tue"], "times": ["07:00"],
                             "every": 2, "start": "2026-11-03"}         # S9, see below
+    {"type": "weekly",      "day_times": {"mon": ["05:10"], "sat": ["09:00", "18:00"]}}  # D91
     {"type": "monthly",    "week": 1, "weekday": "sun", "times": ["12:00"]}  # week -1 = last
     {"type": "monthly_day", "day": 15, "times": ["09:00"]}                    # day -1 = last
 
@@ -16,6 +17,10 @@ D73/D74): nothing fires before `start` or after `end`. With `every` ≥ 2 the we
 (Monday–Sunday) of `start` is the first on-week. A rule with `every` ≥ 2 must be anchored
 (have a `start`, see `anchored`) before it is stored or scheduled. A rule with an `end`
 runs out: `next_occurrence` returns None after its last occurrence (D76).
+
+A weekly rule with different times per weekday (D90, D91) stores `day_times` instead of
+`weekdays` + `times`; when every chosen day has the same times it collapses back to the
+plain shape, so old rows and plain rules never change.
 
 Every rule may also be suspended between dates (D81, D88): `"suspended": [{"start":
 "2026-11-16", "end": "2026-11-22"}]`, inclusive, sorted, never overlapping, left out when
@@ -75,10 +80,18 @@ def _hhmm(t: time) -> str:
     return f"{t.hour:02d}:{t.minute:02d}"
 
 
+NO_TIMES = "a rule needs at least one time"
+
+
 def _check_times(times: tuple[time, ...]) -> tuple[time, ...]:
-    unique = tuple(sorted(set(times)))
+    unique = _check_times_or_none(times)
     if not unique:
-        raise ValueError("a rule needs at least one time")
+        raise ValueError(NO_TIMES)
+    return unique
+
+
+def _check_times_or_none(times: tuple[time, ...]) -> tuple[time, ...]:
+    unique = tuple(sorted(set(times)))
     if len(unique) > TIMES_PER_RULE_MAX:
         raise ValueError(f"a rule has at most {TIMES_PER_RULE_MAX} times")
     return unique
@@ -126,6 +139,8 @@ RuleTime = Annotated[
     time, BeforeValidator(_to_time), PlainSerializer(_hhmm, return_type=str, when_used="json")
 ]
 Times = Annotated[tuple[RuleTime, ...], AfterValidator(_check_times)]
+WeeklyTimes = Annotated[tuple[RuleTime, ...], AfterValidator(_check_times_or_none)]
+"""A weekly rule's shared times: empty when it has `day_times` (D91)."""
 Weekdays = Annotated[tuple[Weekday, ...], AfterValidator(_check_weekdays)]
 Week = Annotated[int, Field(strict=True), AfterValidator(_check_week)]
 MonthDay = Annotated[int, Field(strict=True), AfterValidator(_check_day)]
@@ -199,21 +214,90 @@ class DailyRule(_Rule):
     times: Times
 
 
+type WeekTimes = dict[Weekday, tuple[time, ...]]
+"""A week of a weekly rule: each chosen weekday and its times (D90)."""
+
+
+def _week_from(raw: Any) -> WeekTimes:
+    """`day_times` input → chosen days in weekday order, each with 1–12 sorted times."""
+    if not isinstance(raw, dict):
+        raise ValueError("day_times must map weekdays to times")
+    week: WeekTimes = {}
+    for key, values in raw.items():
+        try:
+            day = Weekday(key)
+        except ValueError:
+            raise ValueError(f"unknown weekday {key!r}") from None
+        if isinstance(values, str) or not isinstance(values, list | tuple):
+            raise ValueError("day_times must map weekdays to lists of times")
+        week[day] = _check_times(tuple(_to_time(v) for v in values))
+    return dict(sorted(week.items(), key=lambda item: item[0].index))
+
+
 class WeeklyRule(_Rule):
     """Given weekdays, every `every` weeks (Monday–Sunday weeks), never before `start`.
 
     `every` ≥ 2 without `start` is a valid model but "not anchored yet": run it through
     `anchored` before storing or scheduling it.
+
+    Different times per weekday (D90, D91): build it with `day_times` ({weekday: times}).
+    When every chosen day has the same times it collapses to `weekdays` + `times`;
+    otherwise `weekdays` lists the chosen days, `times` is empty and `day_times` holds the
+    week. Use `times_for` / `week` rather than `times` when that matters.
     """
 
     type: Literal["weekly"] = "weekly"
     weekdays: Weekdays
-    times: Times
+    times: WeeklyTimes
     every: WeekInterval = 1
+    day_times: dict[Weekday, Times] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _split_day_times(cls, data: Any) -> Any:
+        if not isinstance(data, dict) or data.get("day_times") is None:
+            return data
+        if data.get("times"):
+            raise ValueError("give `times` or `day_times`, not both")
+        week = _week_from(data["day_times"])
+        rest = {k: v for k, v in data.items() if k not in ("weekdays", "times", "day_times")}
+        shared = set(week.values())
+        if len(shared) == 1:  # the same times on every chosen day: the plain shape (D91)
+            return {**rest, "weekdays": tuple(week), "times": shared.pop()}
+        return {**rest, "weekdays": tuple(week), "times": (), "day_times": week}
+
+    @model_validator(mode="after")
+    def _times_given(self) -> Self:
+        if self.day_times is None and not self.times:
+            raise ValueError(NO_TIMES)
+        return self
 
     @property
     def is_anchored(self) -> bool:
         return self.every == 1 or self.start is not None
+
+    @property
+    def has_day_times(self) -> bool:
+        """Different times per weekday (D91)."""
+        return self.day_times is not None
+
+    def times_for(self, day: Weekday) -> tuple[time, ...]:
+        """The times on `day` (empty when it isn't a chosen day)."""
+        if self.day_times is not None:
+            return self.day_times.get(day, ())
+        return self.times if day in self.weekdays else ()
+
+    @property
+    def week(self) -> WeekTimes:
+        """Each chosen weekday with its times, in weekday order."""
+        return {day: self.times_for(day) for day in self.weekdays}
+
+
+def with_week(rule: WeeklyRule, week: WeekTimes) -> WeeklyRule:
+    """`rule` with another week (days and times), keeping `every`, `start`, `end` and
+    suspensions (D95). `InvalidRule` when no day has times."""
+    rest = rule.model_dump(exclude={"weekdays", "times", "day_times"})
+    return WeeklyRule(**rest, day_times=week)
 
 
 class MonthlyRule(_Rule):
@@ -273,6 +357,8 @@ def to_json(rule: RecurrenceRule) -> dict[str, Any]:
         exclude.add("end")
     if not rule.suspended:
         exclude.add("suspended")
+    if isinstance(rule, WeeklyRule):
+        exclude |= {"weekdays", "times"} if rule.has_day_times else {"day_times"}
     return rule.model_dump(mode="json", exclude=exclude)
 
 
@@ -381,6 +467,12 @@ def _matches(rule: RecurrenceRule, d: date) -> bool:
             return d.day == target
 
 
+def _times_on(rule: RecurrenceRule, d: date) -> tuple[time, ...]:
+    if isinstance(rule, WeeklyRule):
+        return rule.times_for(Weekday.from_index(d.weekday()))
+    return rule.times
+
+
 def next_occurrence(rule: RecurrenceRule, tz: ZoneInfo, after: datetime) -> datetime | None:
     """The first occurrence strictly after `after`, as aware UTC. None: the series is over
     (nothing left on or before `end`, D76)."""
@@ -399,7 +491,7 @@ def next_occurrence(rule: RecurrenceRule, tz: ZoneInfo, after: datetime) -> date
             continue
         # Resolving can reorder or merge times on a DST day (02:30 in a gap becomes 03:30),
         # so sort the resolved instants rather than trusting the wall-clock order.
-        for at in sorted({resolve_local(d, t, tz) for t in rule.times}):
+        for at in sorted({resolve_local(d, t, tz) for t in _times_on(rule, d)}):
             if at > after:
                 return at
     raise InvalidRule("This repeat rule has no upcoming occurrence.")
@@ -446,16 +538,30 @@ def describe(rule: RecurrenceRule, tz: ZoneInfo, today: date | None = None) -> s
     return text
 
 
+def _at(times: tuple[time, ...]) -> str:
+    return f"at {_join([_hhmm(t) for t in times])}"
+
+
+def _describe_week(rule: "WeeklyRule") -> str:
+    """Days with equal times grouped, groups in the order of their first day (D97):
+    "Monday and Thursday at 05:10, Tuesday at 07:30 and Saturday at 09:00 and 18:00"."""
+    groups: dict[tuple[time, ...], list[Weekday]] = {}
+    for day, times in rule.week.items():
+        groups.setdefault(times, []).append(day)
+    return _join([f"{_join([d.full_name for d in days])} {_at(t)}" for t, days in groups.items()])
+
+
 def _describe_pattern(rule: RecurrenceRule, tz: ZoneInfo) -> str:
-    at = f"at {_join([_hhmm(t) for t in rule.times])} ({tz.key})"
+    zone = f"({tz.key})"
+    if isinstance(rule, WeeklyRule):
+        week = _describe_week(rule)
+        if rule.every >= 2:
+            return f"Every {rule.every} weeks on {week} {zone}"
+        return f"Every {week} {zone}"
+    at = f"{_at(rule.times)} {zone}"
     match rule:
         case DailyRule():
             return f"Every day {at}"
-        case WeeklyRule():
-            days = _join([w.full_name for w in rule.weekdays])
-            if rule.every >= 2:
-                return f"Every {rule.every} weeks on {days} {at}"
-            return f"Every {days} {at}"
         case MonthlyRule():
             return f"Every {_WEEK_WORDS[rule.week]} {rule.weekday.full_name} of the month {at}"
         case MonthlyDayRule():

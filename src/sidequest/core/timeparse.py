@@ -110,11 +110,13 @@ _WEEKDAY_WORDS: dict[str, tuple[Weekday, ...]] = {
     **{word: (day,) for word, day in _DAY_WORDS.items()},
     "weekdays": (Weekday.MON, Weekday.TUE, Weekday.WED, Weekday.THU, Weekday.FRI),
     "weekend": (Weekday.SAT, Weekday.SUN),
+    "all": tuple(Weekday),  # D98
 }
 
 
 def parse_weekdays(s: str) -> list[Weekday]:
-    """`mon,thu`, full English names, `weekdays`, `weekend`; deduplicated, Monday first."""
+    """`mon,thu`, full English names, `weekdays`, `weekend`, `all` (D98); deduplicated,
+    Monday first."""
     parts = [p for p in _LIST_SEP_RE.split(s.strip().lower()) if p and p != "and"]
     if not parts:
         raise InvalidRule("Enter at least one weekday, e.g. mon,thu.")
@@ -124,7 +126,7 @@ def parse_weekdays(s: str) -> list[Weekday]:
         if days is None:
             raise InvalidRule(
                 f"Unknown weekday: {part}. Use e.g. mon,thu or monday,thursday, "
-                "or weekdays / weekend."
+                "or weekdays / weekend / all."
             )
         found.update(days)
     return sorted(found, key=lambda w: w.index)

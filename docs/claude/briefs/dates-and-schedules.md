@@ -1,6 +1,6 @@
 # Brief — Weekday dates, suspensions, per-day times, start and end dates
 
-**Status:** in progress (Segments 1–3 done; Segment 4 ready) · **Branch:** `claude/dates-and-schedules` · **Migration:** none (all new data lives in
+**Status:** done (Segments 1–4, incl. D98) · **Branch:** `claude/dates-and-schedules` · **Migration:** none (all new data lives in
 the rule JSON) · Written by Claude (Opus 5.5), 2026-11-14.
 
 Four features, one segment each, **numbered in build order**: run Segment 1, 2, 3, 4, one per session.
@@ -212,11 +212,12 @@ Tim chose the **week builder** over a schedule text option or a per-day override
 | D90 | **Weekly rules can have different times per weekday** (e.g. Mon 05:10, Tue 07:30, Wed–Thu 05:10, Sat 09:00 and 18:00). 1–12 times per day. | Tim |
 | D91 | **Storage.** Same times on every chosen day → the existing `weekdays` + `times` shape (old rows unchanged). Otherwise `"day_times": {"mon": ["05:10"], "tue": ["07:30"], …}` replaces both. The model normalises (collapses equal times back) and gives `times_for(day)`; `next_occurrence` uses it. `every`, `start`, `end`, `suspended` work as before. | Claude |
 | D92 | **Opening the builder: `/todo repeat weekly custom-times:true`.** `days` and `times` become optional: without `custom-times` both are required ("Give `days` and `times`, or set `custom-times:true` to build the week."); with it, both given together prefill the builder (one alone is an error). All other options are taken as usual. | Tim |
-| D93 | **Layout.** Ephemeral message: embed "Week for **title**", seven lines Mon–Sun (times, or "—"), footer with the zone and every/start/end. Row 1: multi-select **Pick days…** (Mon–Sun; each option's description = its times or "off"). Row 2: **Set times** (modal "Times for Mon, Wed and Thu", one field, prefilled when the picked days share times, placeholder `05:10, 18:00`), **Clear** (turns the picked days off), **Save**, **Cancel**. Set times / Clear with nothing picked → "Pick one or more days first." After each change the selection resets and the embed updates. | Tim (builder), Claude (details) |
+| D93 | **Layout.** Ephemeral message: embed "Week for **title**", seven lines Mon–Sun (times, or "—"), footer with the zone and every/start/end. Row 1: multi-select **Set times for…** (Mon–Sun; each option's description = its times or "off"); closing it opens the modal "Times for Mon, Wed and Thu" (one field, prefilled when the picked days share times, placeholder `05:10, 18:00`). Row 2: multi-select **Turn days off…**. Row 3: **Save**, **Cancel**. After each change the selection resets and the embed updates. *(Changed after Tim's test, 2026-11-14: the first layout's Pick days + Set times button needed two clicks.)* | Tim (builder, layout change), Claude (details) |
 | D94 | **Save / Cancel / timeout.** Save needs at least one day with times. With `details:true`, Save opens the details modal, then creates (same as `create_flow`). The reply is today's created text with the week. Cancel → "Not added." (edit: "Nothing changed."). Owner-only, **15-minute** timeout → "This week editor expired; nothing was saved." | Claude |
 | D95 | **Editing: `/todo edit todo custom-times:true`** on a weekly to-do opens the builder with its current week. It can be combined with the other edit options except `days`/`times`; all are applied together on Save. On another rule type: the usual "can't switch the repeat type" error. | Claude |
 | D96 | **`days:`/`times:` on a to-do with per-day times are refused** in `/todo edit`: "**title** has different times per day; use `custom-times:true` to change its week." (No guessing which day gets what.) | Claude |
 | D97 | **Description** groups days with equal times, in weekday order: "Every Monday, Wednesday and Thursday at 05:10, Tuesday at 07:30 and Saturday at 09:00 and 18:00 (Europe/Amsterdam)", plus the D80 suffixes. | Claude |
+| D98 | **`all` in `days`** means Monday–Sunday, next to `weekdays` and `weekend` (any case; mixes with other words, e.g. `all,mon`). Only `all`: no `daily`/`everyday`. Not a date word (D70 dates are unchanged). Works wherever `days` is parsed: `/todo repeat weekly` (also as builder prefill) and `/todo edit`. The `days` descriptions and the unknown-weekday hint mention it. | Tim (2026-11-15) |
 
 ### Implementation
 - **Core** (main session): `WeeklyRule` with optional `day_times`, normalising validator, `times_for`,
@@ -228,23 +229,28 @@ Tim chose the **week builder** over a schedule text option or a per-day override
   edit via `todos.edit`), reusing `create_flow`'s details step on Save.
 
 ### Checklist
-1. [ ] Core — main session. 2. [ ] Core tests — **Haiku**: JSON round-trip both shapes, collapsing,
+1. [x] Core — main session. 2. [x] Core tests — **Haiku**: JSON round-trip both shapes, collapsing,
    `next_occurrence` across a mixed week incl. DST, with `every` 2 and suspensions, ≤ 12 per day,
    `describe` grouping, D96 refusals.
-3. [ ] Builder view + commands — main session. 4. [ ] Render tests — **Haiku**: `week_embed` lines and
+3. [x] Builder view + commands — main session. 4. [x] Render tests — **Haiku**: `week_embed` lines and
    select descriptions.
-5. [ ] Docs — Opus: `CLAUDE.md` §4 rules, §3 package map (new view), §6 D90–D97; README.
-6. [ ] Checks. Handoff.
+5. [x] Docs — Opus: `CLAUDE.md` §4 rules, §3 package map (new view), §6 D90–D97; README.
+6. [x] Checks. Handoff.
+7. [x] D98 — main session: `all` in `_WEEKDAY_WORDS` (`core/timeparse.py`), the `days` option
+   descriptions (`repeat.py`, `todo_edit.py`) and the error hint; tests in `test_timeparse.py`;
+   `CLAUDE.md` §6 D98; checks; Handoff line.
 
 ### Manual test (Tim)
-- [ ] `/todo repeat weekly title:Gym custom-times:true` → pick Mon, Wed, Thu → Set times 05:10 → pick Tue
-      → 07:30 → pick Sat → 09:00, 18:00 → Save → description as D97, reminders fire at those times.
-- [ ] Prefill with `days:weekdays times:05:10`, change Tuesday only.
-- [ ] Clear a day; Save with no days → refused.
-- [ ] `details:true` → details form after Save.
-- [ ] `/todo edit todo:Gym custom-times:true` shows the current week; Save changes the next reminder.
-- [ ] `/todo edit todo:Gym times:06:00` → D96 message.
-- [ ] Leave the builder for 15 minutes → expired text.
+- [x] `/todo repeat weekly title:Gym custom-times:true` → Set times for… Mon, Wed, Thu → 05:10 → Tue
+      → 07:30 → Sat → 09:00, 18:00 → Save (each form opens on the first try) → description as D97, reminders fire at those times.
+- [x] Prefill with `days:weekdays times:05:10`, change Tuesday only.
+- [x] Turn days off… a day; Save with no days → refused.
+- [x] `details:true` → details form after Save.
+- [x] `/todo edit todo:Gym custom-times:true` shows the current week; Save changes the next reminder.
+- [x] `/todo edit todo:Gym times:06:00` → D96 message.
+- [x] Leave the builder for 15 minutes → expired text.
+- [x] `/todo repeat weekly title:Walk days:all times:07:00` → "Every Monday, Tuesday, … and Sunday at 07:00";
+      `days:all times:05:10 custom-times:true` prefills all seven days (D98).
 
 ---
 
@@ -345,3 +351,42 @@ Numbered by Tim's original feature order.
     `20:00, 22:00` still schedules tonight's 22:00 (only occurrences up to the checked-off one are
     skipped). Should an early check-off cover the rest of that day instead?
 - **Manual tests:** all passed on the dev bot, incl. the edit fix (Tim, 2026-11-14).
+
+### Segment 4 — 2026-11-14
+- **Built:** `WeeklyRule.day_times` (D91): a `day_times` input collapses to `weekdays` + `times`
+  when every day has the same times, else keeps `day_times` with `times == ()`; `has_day_times`,
+  `times_for`, `week`, `recurrence.with_week`, `WeekTimes`. `next_occurrence` uses each day's
+  times; `to_json` writes either shape; `describe` groups days (D97). `options`:
+  `weekly_prefill` (D92), `check_window`, `edited_rule(custom_times=, title=)` with the D96
+  refusal and "`custom-times` can't be combined with `days` or `times`."; `edit_patch(custom_times=)`.
+  Bot: `views/week_builder.py` (`WeekBuilderView`, `TimesModal`), `render_week.py`,
+  `/todo repeat weekly custom-times` (`repeat.week_builder_flow`), `/todo edit custom-times`
+  (`todo_edit._open_week_builder`).
+- **Tests:** `test_recurrence_day_times.py` (75), `test_render_week.py` (30), both by Haiku and
+  reviewed. The brief's "exactly 7 occurrences" for the mixed week was a typo in Claude's test
+  spec; the week has 6 reminders and the test checks 6.
+- **Checks:** ruff check/format clean; full `pytest` with the test Postgres: 1074 passed. No model
+  change, so no `alembic check`.
+- **Deviations:**
+  - Timeout is **14.5 minutes** (`WEEK_BUILDER_TIMEOUT = 870`), not 15. Discord's interaction
+    tokens last 15 minutes, so at exactly 15 the "expired" edit would fail. The view edits the
+    message with the token of the latest click or modal (`view.interaction`).
+  - The render code lives in a new `bot/render_week.py`, not `render.py` (already ~477 lines).
+  - `/todo edit custom-times:true` checks edit rights before opening the builder (`can_edit`),
+    so nobody builds a week only to be refused on Save.
+  - Save, Cancel and success replace the builder message itself (no new reply). A refusal on
+    Save (e.g. title taken, nothing before `end`) is shown ephemerally and the builder stays open.
+  - Extra messages: Save with no days → "Set times for at least one day first."; one of
+    `days`/`times` with `custom-times` → "To fill in the week, give both `days` and `times` (or
+    neither)."; `custom-times` on a daily/monthly to-do → the usual type error naming
+    `custom-times`.
+  - **Layout change after Tim's test (D93):** a separate Set times button needed two clicks
+    (Discord sends a multi-select only when it closes; the click that closes it doesn't reach
+    the button). Now closing **Set times for…** opens the times form, and **Turn days off…**
+    replaces Clear. Known limit: if you close the times form without submitting, the picked
+    days stay shown; change the selection to open it again.
+- **D98 (2026-11-15):** `all` added to `_WEEKDAY_WORDS`; the `days` descriptions and the
+  unknown-weekday hint mention it; 4 cases added to `test_timeparse.py` (also: `all` is no
+  date word). Full `pytest`: 1079 passed.
+- **Open questions:** none new. (Segment 3's question about early check-off + time edits stands.)
+- **Manual tests:** all passed on the dev bot, incl. `days:all` (Tim, 2026-11-15).

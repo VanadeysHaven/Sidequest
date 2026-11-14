@@ -5,7 +5,7 @@ weekday, monthly by day). Each follows the `/todo add` pattern and creates via
 import discord
 from discord import app_commands
 
-from sidequest.bot import adapter, autocomplete, options
+from sidequest.bot import adapter, autocomplete, options, render, render_week
 from sidequest.bot.commands import common
 from sidequest.bot.commands.common import (
     CREATE_DESCRIPTIONS,
@@ -15,7 +15,8 @@ from sidequest.bot.commands.common import (
     Title,
 )
 from sidequest.bot.options import WeekdayOption, WeekOption
-from sidequest.core.recurrence import RecurrenceRule
+from sidequest.bot.views.week_builder import WeekBuilderView
+from sidequest.core.recurrence import RecurrenceRule, WeeklyRule, WeekTimes
 from sidequest.services import todos
 from sidequest.services.actor import Actor
 from sidequest.services.dto import TodoView
@@ -92,19 +93,20 @@ def weekly_command() -> app_commands.Command:  # type: ignore[type-arg]
     )
     @app_commands.describe(**CREATE_DESCRIPTIONS)
     @app_commands.describe(
-        days="e.g. mon,thu or weekdays / weekend",
-        times="24-hour times, comma-separated, e.g. 08:00, 20:00",
+        days="e.g. mon,thu or weekdays / weekend / all (optional with custom-times)",
+        times="24-hour times, comma-separated, e.g. 08:00, 20:00 (optional with custom-times)",
         every=common.EVERY_DESCRIPTION,
         start=common.START_DESCRIPTION,
         end=END_DESCRIPTION,
+        custom_times="Build the week: different times per day",
     )
-    @app_commands.rename(list_="list")
+    @app_commands.rename(list_="list", custom_times="custom-times")
     @app_commands.autocomplete(timezone=autocomplete.timezone, list_=autocomplete.todo_list)
     async def weekly(
         interaction: discord.Interaction,
         title: Title,
-        days: str,
-        times: str,
+        days: str | None = None,
+        times: str | None = None,
         timezone: str | None = None,
         assignee: discord.User | None = None,
         assignee2: discord.User | None = None,
@@ -114,9 +116,26 @@ def weekly_command() -> app_commands.Command:  # type: ignore[type-arg]
         start: str | None = None,
         end: str | None = None,
         details: bool = False,
+        custom_times: bool = False,
     ) -> None:
         common.check_options(list_value=list_, date_text=start, timezone=timezone)
         common.check_options(date_text=end)
+        prefill = options.weekly_prefill(days, times, custom_times=custom_times)
+        if custom_times:
+            await week_builder_flow(
+                interaction,
+                title=title,
+                week=prefill.week if prefill else {},
+                every=every,
+                start=start,
+                end=end,
+                timezone=timezone,
+                details=details,
+                list_=list_,
+                assignee_ids=adapter.user_ids([assignee, assignee2, assignee3]),
+            )
+            return
+        assert days is not None and times is not None  # weekly_prefill checked them
         rule = options.weekly_rule(days, times, every)
 
         async def create(uow: Uow, actor: Actor, title: str, text: str | None) -> Outcome[TodoView]:
@@ -134,6 +153,68 @@ def weekly_command() -> app_commands.Command:  # type: ignore[type-arg]
         await common.create_flow(interaction, title=title, with_details=details, create=create)
 
     return weekly
+
+
+async def week_builder_flow(
+    interaction: discord.Interaction,
+    *,
+    title: str,
+    week: WeekTimes,
+    every: int,
+    start: str | None,
+    end: str | None,
+    timezone: str | None,
+    details: bool,
+    list_: str | None,
+    assignee_ids: list[int] | None,
+) -> None:
+    """`/todo repeat weekly custom-times:true` (D92–D94): open the week builder; Save
+    creates the to-do like `create_flow` (details form first with `details:true`)."""
+    await adapter.defer(interaction)
+    actor = adapter.actor_from(interaction)
+    async with adapter.uows(interaction)() as uow:
+        zone = await adapter.zone_name(uow, actor, timezone)
+        start_date = await adapter.local_date(uow, actor, start, timezone) if start else None
+        end_date = await adapter.local_date(uow, actor, end, timezone) if end else None
+    options.check_window(start_date, end_date)
+
+    def make_rule(days: WeekTimes) -> WeeklyRule:
+        return WeeklyRule(day_times=days, every=every, start=start_date, end=end_date)
+
+    async def save(
+        save_interaction: discord.Interaction, rule: WeeklyRule, new_title: str, text: str | None
+    ) -> str:
+        save_actor = adapter.actor_from(save_interaction)
+        async with adapter.uows(save_interaction)() as uow:
+            out = await todos.create_recurring(
+                uow,
+                save_actor,
+                list_id=adapter.parse_list_id(list_),
+                title=new_title,
+                rule=rule,
+                details=text,
+                timezone=timezone,
+                assignee_ids=assignee_ids,
+            )
+            notes = await adapter.collect_notes(uow, save_actor.user_id)
+        todo = await adapter.apply(save_interaction, out)
+        return adapter.with_notes(notes, render.created_text(todo)) or ""
+
+    view = WeekBuilderView(
+        actor.user_id,
+        title=title,
+        week=week,
+        tz=zone,
+        make_rule=make_rule,
+        save=save,
+        cancel_text=render_week.NOT_ADDED,
+        every=every,
+        start=start_date,
+        end=end_date,
+        ask_details=details,
+    )
+    view.interaction = interaction
+    await adapter.reply(interaction, embed=view.embed(), view=view)
 
 
 def monthly_weekday_command() -> app_commands.Command:  # type: ignore[type-arg]
