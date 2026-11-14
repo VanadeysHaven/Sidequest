@@ -303,6 +303,6 @@ Numbered by Tim's original feature order.
     then refuses, or the D75 exception keeps the reminder as the last).
   - `describe` with `today=None` always shows "from" (the services always pass today).
   - `services/_common.py` is ~415 lines (the series logic went to `_series.py`).
-- **Open questions:** an `end` earlier than the reminder that's up is accepted (D75 exception; the
-  reminder simply becomes the last). Refuse instead?
+- **Open questions:** none. (An `end` earlier than the reminder that's up is accepted and that
+  reminder becomes the last: kept, Tim 2026-11-14.)
 - **Manual tests:** all passed on the dev bot (Tim, 2026-11-14).

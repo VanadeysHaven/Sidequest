@@ -290,7 +290,7 @@ and are added here and in the feature's brief.
 | D72 | `DATE_HINT` and date option descriptions mention "a weekday (e.g. monday)"; `next monday` is not supported. |
 | D73 | All four `/todo repeat` commands have `start` and `end` (inclusive dates, weekday names work); `/todo edit` has both for every rule type, `none` removes one. Weekly `every` ≥ 2 keeps D54–D59. |
 | D74 | First = first match on/after `start`, last = last match on/before `end`; they needn't be matching days. |
-| D75 | `start` ≤ a year ahead (all rules), `end` ≥ `start`, something must fall between now (or `start`) and `end` ("No reminder of **title** falls between … and …"); on edit allowed while a reminder is up, which becomes the last. |
+| D75 | `start` ≤ a year ahead (all rules), `end` ≥ `start`, something must fall between now (or `start`) and `end` ("No reminder of **title** falls between … and …"); on edit allowed while a reminder is up (even with `end` before it), which becomes the last. |
 | D76 | After the last occurrence nothing is scheduled; the last reminder stays up until checked off; after downtime the one catch-up reminder is the last. |
 | D77 | No extra confirmation for the last occurrence (changed by Tim after the build; only D67 applies). |
 | D78 | The last check-off marks the to-do done (history, off the lists); its name is free at once. |
