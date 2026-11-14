@@ -3,12 +3,26 @@
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from sidequest.bot import render
-from sidequest.core.enums import TodoKind, TodoStatus
+from sidequest.core.enums import OccurrenceStatus, TodoKind, TodoStatus
 from sidequest.core.recurrence import DailyRule, describe
-from sidequest.services.dto import ListView, Page, SubtaskView, TodoView, UpcomingItem
+from sidequest.services.dto import (
+    ListView,
+    OccurrenceView,
+    Page,
+    SubtaskView,
+    TodoView,
+    UpcomingItem,
+)
 
 START = datetime(2030, 1, 7, 9, 0, tzinfo=UTC)
+REMINDER_DUE = datetime(2030, 1, 6, 9, 0, tzinfo=UTC)
+TS = int(START.timestamp())
+RTS = int(REMINDER_DUE.timestamp())
+RULE = "Every day at 09:00 (UTC)"
+LAST_UP_TEXT = "Last reminder — nothing after this one"
 
 OPEN_MARK = "☐"
 DONE_MARK = "☑"
@@ -249,6 +263,32 @@ def test_done_text_for_recurring_todo_without_next_occurrence() -> None:
         next_due_at=None,
     )
     assert render.done_text(todo) == "✅ Checked off **Buy milk**."
+
+
+def test_done_text_marks_the_next_one_as_the_last() -> None:
+    todo = make_todo(
+        kind=TodoKind.RECURRING,
+        rule=DailyRule(times=["09:00"]),
+        rule_description="Every day at 09:00 (UTC)",
+        next_due_at=START,
+        pending_occurrence_id=7,
+        final_occurrence_id=7,
+    )
+    ts = int(START.timestamp())
+    assert render.done_text(todo) == (
+        f"✅ Checked off **Buy milk**. Next (last): <t:{ts}:F> (<t:{ts}:R>)"
+    )
+
+
+def test_done_text_for_last_occurrence_says_the_todo_is_done() -> None:
+    todo = make_todo(
+        kind=TodoKind.RECURRING,
+        status=TodoStatus.DONE,
+        rule=DailyRule(times=["09:00"]),
+        rule_description="Every day at 09:00 (UTC)",
+        next_due_at=None,
+    )
+    assert render.done_text(todo) == (f"✅ Checked off **Buy milk**. {render.LAST_DONE}")
 
 
 # --- subtask options ---------------------------------------------------------------------
@@ -530,3 +570,121 @@ def test_undo_options_long_title_is_cut_to_100() -> None:
     (option,) = render.undo_options(["x" * 150])
     assert len(option.label) == 100
     assert option.label.endswith("…")
+
+
+# --- repeating to-dos: last occurrence (D76-D78) -----------------------------------------
+
+
+def _repeating(**overrides: object) -> TodoView:
+    defaults: dict[str, object] = {
+        "kind": TodoKind.RECURRING,
+        "rule": DailyRule(times=["09:00"]),
+        "rule_description": RULE,
+    }
+    return make_todo(**{**defaults, **overrides})
+
+
+def _reminder(occurrence_id: int) -> OccurrenceView:
+    return OccurrenceView(
+        id=occurrence_id,
+        todo_id=1,
+        due_at=REMINDER_DUE,
+        status=OccurrenceStatus.SENT,
+        late=False,
+        sent_at=REMINDER_DUE,
+        channel_id=None,
+        message_id=None,
+    )
+
+
+WHEN_REPEATING_CASES = [
+    pytest.param(
+        {"next_due_at": START, "pending_occurrence_id": 2, "final_occurrence_id": None},
+        f"{RULE}\nNext: <t:{TS}:F> (<t:{TS}:R>)",
+        id="next-not-final",
+    ),
+    pytest.param(
+        {"next_due_at": START, "pending_occurrence_id": 2, "final_occurrence_id": 9},
+        f"{RULE}\nNext: <t:{TS}:F> (<t:{TS}:R>)",
+        id="next-other-occurrence-is-final",
+    ),
+    pytest.param(
+        {"next_due_at": START, "pending_occurrence_id": 2, "final_occurrence_id": 2},
+        f"{RULE}\nNext (last): <t:{TS}:F> (<t:{TS}:R>)",
+        id="next-is-final",
+    ),
+    pytest.param(
+        {
+            "next_due_at": None,
+            "pending_occurrence_id": None,
+            "reminder": _reminder(7),
+            "final_occurrence_id": 7,
+        },
+        f"{RULE}\n{LAST_UP_TEXT}",
+        id="last-reminder-up",
+    ),
+    pytest.param(
+        {"next_due_at": None, "pending_occurrence_id": None, "reminder": _reminder(7)},
+        f"{RULE}\nNext: nothing scheduled",
+        id="reminder-up-not-final",
+    ),
+    pytest.param(
+        {"next_due_at": None, "pending_occurrence_id": None, "final_occurrence_id": 7},
+        f"{RULE}\nNext: nothing scheduled",
+        id="final-set-but-no-reminder",
+    ),
+    pytest.param(
+        {
+            "next_due_at": None,
+            "pending_occurrence_id": None,
+            "reminder": _reminder(7),
+            "final_occurrence_id": 9,
+        },
+        f"{RULE}\nNext: nothing scheduled",
+        id="reminder-up-other-occurrence-is-final",
+    ),
+]
+
+
+@pytest.mark.parametrize(("overrides", "expected"), WHEN_REPEATING_CASES)
+def test_when_repeating_last_occurrence(overrides: dict[str, object], expected: str) -> None:
+    assert render.when(_repeating(**overrides)) == expected
+
+
+SHORT_WHEN_REPEATING_CASES = [
+    pytest.param(
+        {"next_due_at": START, "pending_occurrence_id": 2, "final_occurrence_id": None},
+        f"🔁 <t:{TS}:f> (<t:{TS}:R>)",
+        id="next-not-final",
+    ),
+    pytest.param(
+        {"next_due_at": START, "pending_occurrence_id": 2, "final_occurrence_id": 2},
+        f"🔁 last: <t:{TS}:f> (<t:{TS}:R>)",
+        id="next-is-final",
+    ),
+    pytest.param(
+        {
+            "next_due_at": None,
+            "pending_occurrence_id": None,
+            "reminder": _reminder(7),
+            "final_occurrence_id": 7,
+        },
+        f"🔁 last: <t:{RTS}:f> (<t:{RTS}:R>)",
+        id="last-reminder-up-uses-reminder-due",
+    ),
+    pytest.param(
+        {"next_due_at": None, "pending_occurrence_id": None, "reminder": _reminder(7)},
+        "🔁 nothing scheduled",
+        id="reminder-up-not-final",
+    ),
+    pytest.param(
+        {"next_due_at": None, "pending_occurrence_id": None, "final_occurrence_id": 7},
+        "🔁 nothing scheduled",
+        id="nothing-scheduled",
+    ),
+]
+
+
+@pytest.mark.parametrize(("overrides", "expected"), SHORT_WHEN_REPEATING_CASES)
+def test_short_when_repeating_last_occurrence(overrides: dict[str, object], expected: str) -> None:
+    assert render.short_when(_repeating(**overrides)) == expected

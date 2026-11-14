@@ -20,7 +20,7 @@ from sidequest.core.timeparse import Timed, resolve_due
 from sidequest.core.tz import get_zone
 from sidequest.db.models import Occurrence, Todo, TodoAssignee, TodoList
 from sidequest.services import _common as c
-from sidequest.services import lists
+from sidequest.services import _series, lists
 from sidequest.services.actor import Actor
 from sidequest.services.dto import CheckedOff, DueInput, ListFilter, Page, TodoPatch, TodoView
 from sidequest.services.effects import Effect, Outcome
@@ -129,18 +129,21 @@ async def create_recurring(
     timezone: str | None = None,
     assignee_ids: Sequence[int] | None = None,
 ) -> Outcome[TodoView]:
-    """Repeating to-do with its first pending occurrence."""
+    """Repeating to-do with its first pending occurrence. Refused when its `start`/`end`
+    leave nothing to remind of (D75)."""
     lst = await _target_list(uow, actor, list_id)
     zone = await c.effective_zone(uow, actor, timezone)
-    rule = recurrence.anchored(rule, zone, uow.clock.now())
+    now = uow.clock.now()
+    rule = recurrence.anchored(rule, zone, now)
     todo = await _new_todo(
         uow, actor, lst, TodoKind.RECURRING, title, details, zone.key, assignee_ids
     )
+    _series.require_upcoming(todo.title, rule, zone, now)
     todo.recurrence = recurrence.to_json(rule)
     await _require_channel(uow, lst.guild_id)
     uow.session.add(todo)
     await c.flush_titles(uow, todo.title, lst.name)
-    c.add_next_pending(uow, todo, after=uow.clock.now())
+    c.add_next_pending(uow, todo, after=now)
     view = await c.view_of(uow, actor, todo)
     await uow.session.commit()
     return Outcome(value=view, changed_schedule=True)
@@ -192,7 +195,7 @@ async def list_todos(
         )
     )
     occs = await c.open_occurrences(uow, [t.id for t in todos])
-    items = [c.todo_view(actor, t, occs[t.id]) for t in todos]
+    items = [c.todo_view(actor, t, occs[t.id], uow.clock.now()) for t in todos]
     await uow.session.commit()  # resolve may have created the server's fallback list
     return Page(items=items, page=page, page_size=page_size, total=total)
 
@@ -258,17 +261,23 @@ async def _retime_once(uow: Uow, todo: Todo, patch: TodoPatch) -> list[Effect]:
 
 
 async def _retime_recurring(uow: Uow, todo: Todo, patch: TodoPatch) -> None:
+    """New rule/zone: the pending occurrence is replaced. Refused when nothing is left
+    before `end`, unless a reminder is up: that one becomes the last (D75)."""
     if patch.due is not None:
         raise InvalidOperation("A repeating to-do has no date; change its repeat rule instead.")
-    if patch.timezone:
-        todo.timezone = get_zone(patch.timezone).key
-    if patch.rule is not None:
-        # Anchored in the (possibly new) zone; a kept `start` stays as it is (D57).
-        rule = recurrence.anchored(patch.rule, get_zone(todo.timezone), uow.clock.now())
-        todo.recurrence = recurrence.to_json(rule)
+    now = uow.clock.now()
+    zone = get_zone(patch.timezone) if patch.timezone else get_zone(todo.timezone)
+    # Anchored in the (possibly new) zone; a kept `start` stays as it is (D57).
+    rule = recurrence.anchored(patch.rule or c.rule_of(todo), zone, now)
+    if _series.is_over(rule, zone, now):
+        occs = (await c.open_occurrences(uow, [todo.id]))[todo.id]
+        if c.find(occs, OccurrenceStatus.SENT) is None:
+            raise _series.nothing_between(todo.title, rule, zone, now)
+    todo.timezone = zone.key
+    todo.recurrence = recurrence.to_json(rule)
     # The sent reminder (if any) stays: it is the current occurrence and can still be done.
     await c.cancel_open(uow, todo, include_sent=False)
-    c.add_next_pending(uow, todo, after=uow.clock.now())
+    c.add_next_pending(uow, todo, after=now)
 
 
 async def edit(uow: Uow, actor: Actor, todo_id: int, patch: TodoPatch) -> Outcome[TodoView]:
@@ -319,8 +328,9 @@ async def set_assignees(
 
 async def complete(uow: Uow, actor: Actor, todo_id: int) -> Outcome[CheckedOff]:
     """One-time: done (closing its reminder). Repeating: check off the current occurrence
-    (the sent reminder if there is one, else the next pending one). The value carries
-    the token to undo it (D60)."""
+    (the sent reminder if there is one, else the next pending one); with neither and the
+    series over (its last reminder failed), the to-do is done (D78). The value carries the
+    token to undo it (D60)."""
     todo = await c.load_todo(uow, actor, todo_id, lock=True)
     c.require_open(todo)
     c.require_complete(actor, todo)
@@ -331,6 +341,9 @@ async def complete(uow: Uow, actor: Actor, todo_id: int) -> Outcome[CheckedOff]:
     elif todo.kind == TodoKind.ONCE:
         c.mark_todo_done(todo, actor, uow.clock.now())
         effects, changed, token = [], False, c.undo_token(todo)
+    elif _series.is_over(c.rule_of(todo), get_zone(todo.timezone), uow.clock.now()):
+        c.mark_todo_done(todo, actor, uow.clock.now())
+        effects, changed, token = [], False, c.undo_token(todo, finished=True)
     else:
         raise InvalidOperation("This repeating to-do has nothing to check off right now.")
     view = await c.view_of(uow, actor, todo)

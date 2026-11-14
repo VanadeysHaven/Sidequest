@@ -85,6 +85,12 @@ class TodoView(StrictModel):
     pending_occurrence_id: int | None
     reminder: OccurrenceView | None
     """The reminder that has been sent and is waiting for Done, if any."""
+    final_occurrence_id: int | None = None
+    """Repeating to-dos with an `end`: the open occurrence that is the last one (the pending
+    one when nothing follows it, else the reminder that is up when nothing is pending, D76).
+    Checking it off marks the to-do done (D78)."""
+    ends_on: dt.date | None = None
+    """The rule's `end` date, if any."""
     assignee_ids: tuple[int, ...]
     subtasks: tuple[SubtaskView, ...]
     created_at: datetime
@@ -153,9 +159,12 @@ class UndoToken(StrictModel):
     """Its status before the check-off (pending or sent)."""
     followup_id: int | None
     """Repeating to-dos: the pending occurrence right after the check-off. Created by the
-    check-off when `previous` is pending (undo cancels it); already there when it was sent."""
+    check-off when `previous` is pending (undo cancels it); already there when it was sent.
+    None after the last one (`finished`)."""
     ticks: tuple[SubtaskTick, ...]
     """Subtask ticks the check-off reset."""
+    finished: bool = False
+    """The check-off was a repeating to-do's last one and marked the to-do done (D78)."""
 
 
 class CheckedOff(StrictModel):

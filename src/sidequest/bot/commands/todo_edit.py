@@ -23,7 +23,8 @@ def edit_command() -> app_commands.Command:  # type: ignore[type-arg]
         weekday="Monthly (weekday): which day",
         day="Monthly (day): 1–31 or last",
         every=f"Weekly: {common.EVERY_DESCRIPTION}",
-        start=f"Weekly: {common.START_DESCRIPTION}",
+        start=common.EDIT_START_DESCRIPTION,
+        end=common.EDIT_END_DESCRIPTION,
         timezone="New timezone (keeps the same wall-clock time)",
     )
     @app_commands.autocomplete(todo=autocomplete.todo, timezone=autocomplete.timezone)
@@ -40,10 +41,12 @@ def edit_command() -> app_commands.Command:  # type: ignore[type-arg]
         day: str | None = None,
         every: Every | None = None,
         start: str | None = None,
+        end: str | None = None,
         timezone: str | None = None,
     ) -> None:
         common.check_options(date_text=date, time_text=time, timezone=timezone)
         common.check_options(date_text=start)
+        common.check_options(date_text=end)
         await adapter.defer(interaction)
         actor = adapter.actor_from(interaction)
         todo_id = adapter.parse_id(todo)
@@ -53,7 +56,6 @@ def edit_command() -> app_commands.Command:  # type: ignore[type-arg]
             due = None
             if date or time:
                 due = await adapter.due_input(uow, actor, date, time, zone)
-            start_date = await adapter.local_date(uow, actor, start, zone) if start else None
             patch = options.edit_patch(
                 current,
                 title=title,
@@ -65,7 +67,8 @@ def edit_command() -> app_commands.Command:  # type: ignore[type-arg]
                 weekday=weekday,
                 day=day,
                 every=every,
-                start=start_date,
+                start=await adapter.edit_date(uow, actor, start, zone),
+                end=await adapter.edit_date(uow, actor, end, zone),
             )
             out = await todos.edit(uow, actor, todo_id, patch)
             notes = await adapter.collect_notes(uow, actor.user_id)

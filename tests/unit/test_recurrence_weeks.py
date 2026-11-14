@@ -280,4 +280,6 @@ DESCRIBE_CASES = [
 
 @pytest.mark.parametrize(("payload", "expected"), DESCRIBE_CASES)
 def test_describe_weekly(payload: Payload, expected: str) -> None:
-    assert describe(from_json(payload), AMS) == expected
+    # `today` after every `start`: the pattern only (the D80 suffixes are in
+    # test_recurrence_window.py).
+    assert describe(from_json(payload), AMS, date(2027, 1, 1)) == expected

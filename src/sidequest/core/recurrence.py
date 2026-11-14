@@ -10,16 +10,18 @@ so they stay at the same local time across DST (BRIEF §4.3). JSON shape (S2):
     {"type": "monthly",    "week": 1, "weekday": "sun", "times": ["12:00"]}  # week -1 = last
     {"type": "monthly_day", "day": 15, "times": ["09:00"]}                    # day -1 = last
 
-Weekly rules may repeat every 2–52 weeks (`every`, left out when 1) and may have a `start`
-date (left out when unset; S9, D54–D59). Nothing fires before `start`; with `every` ≥ 2 its
-week (Monday–Sunday) is the first on-week. A rule with `every` ≥ 2 must be anchored (have a
-`start`, see `anchored`) before it is stored or scheduled.
+Weekly rules may repeat every 2–52 weeks (`every`, left out when 1; S9, D54–D59). Every rule
+may have a `start` and an `end` date (inclusive, in the to-do's zone, left out when unset;
+D73/D74): nothing fires before `start` or after `end`. With `every` ≥ 2 the week
+(Monday–Sunday) of `start` is the first on-week. A rule with `every` ≥ 2 must be anchored
+(have a `start`, see `anchored`) before it is stored or scheduled. A rule with an `end`
+runs out: `next_occurrence` returns None after its last occurrence (D76).
 """
 
 import calendar
 import re
 from datetime import date, datetime, time, timedelta
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 from zoneinfo import ZoneInfo
 
 from pydantic import (
@@ -31,11 +33,13 @@ from pydantic import (
     PlainSerializer,
     TypeAdapter,
     ValidationError,
+    model_validator,
 )
 
 from sidequest.core.enums import Weekday
 from sidequest.core.errors import InvalidRule, SidequestError
 from sidequest.core.limits import START_AHEAD_MAX_DAYS, TIMES_PER_RULE_MAX, WEEK_INTERVAL_MAX
+from sidequest.core.text import plain_date
 from sidequest.core.timeparse import parse_time, resolve_local
 
 # Every valid rule fires within 52 weeks of the later of the search start and its `start`
@@ -100,7 +104,7 @@ def _check_every(every: int) -> int:
 
 def _to_date(value: Any) -> date:
     if isinstance(value, datetime):
-        raise ValueError("start must be a date without a time")
+        raise ValueError("must be a date without a time")
     if isinstance(value, date):
         return value
     if isinstance(value, str) and _ISO_DATE_RE.fullmatch(value):
@@ -108,7 +112,7 @@ def _to_date(value: Any) -> date:
             return date.fromisoformat(value)
         except ValueError:
             pass
-    raise ValueError("start must be a YYYY-MM-DD date")
+    raise ValueError("must be a YYYY-MM-DD date")
 
 
 RuleTime = Annotated[
@@ -119,20 +123,33 @@ Weekdays = Annotated[tuple[Weekday, ...], AfterValidator(_check_weekdays)]
 Week = Annotated[int, Field(strict=True), AfterValidator(_check_week)]
 MonthDay = Annotated[int, Field(strict=True), AfterValidator(_check_day)]
 WeekInterval = Annotated[int, Field(strict=True), AfterValidator(_check_every)]
-StartDate = Annotated[date, BeforeValidator(_to_date)]
+RuleDate = Annotated[date, BeforeValidator(_to_date)]
+
+END_BEFORE_START = "The end date can't be before the start date."
 
 
 # --- rules -------------------------------------------------------------------------------
 
 
 class _Rule(BaseModel):
+    """Every rule may have a `start` and an `end` date, both inclusive (D73/D74)."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    start: RuleDate | None = None
+    end: RuleDate | None = None
 
     def __init__(self, **data: Any) -> None:
         try:
             super().__init__(**data)
         except ValidationError as e:
             raise InvalidRule(_error_message(e)) from None
+
+    @model_validator(mode="after")
+    def _end_after_start(self) -> Self:
+        if self.start is not None and self.end is not None and self.end < self.start:
+            raise ValueError(END_BEFORE_START)
+        return self
 
 
 class DailyRule(_Rule):
@@ -151,7 +168,6 @@ class WeeklyRule(_Rule):
     weekdays: Weekdays
     times: Times
     every: WeekInterval = 1
-    start: StartDate | None = None
 
     @property
     def is_anchored(self) -> bool:
@@ -186,7 +202,7 @@ def _error_message(e: ValidationError) -> str:
     first = e.errors()[0]
     where = ".".join(str(part) for part in first["loc"])
     msg = first["msg"].removeprefix("Value error, ")
-    return f"Invalid repeat rule ({where}): {msg}" if where else f"Invalid repeat rule: {msg}"
+    return f"Invalid repeat rule ({where}): {msg}" if where else msg  # model checks: as is
 
 
 def from_json(data: Any) -> RecurrenceRule:
@@ -203,39 +219,39 @@ def _require_anchored(rule: RecurrenceRule) -> None:
 
 
 def to_json(rule: RecurrenceRule) -> dict[str, Any]:
-    """The JSONB payload for a rule (times as "HH:MM"). Weekly rules leave out `every` when
-    it is 1 and `start` when it is unset, so pre-S9 rows keep exactly their shape (D59)."""
+    """The JSONB payload for a rule (times as "HH:MM"). `start` and `end` are left out when
+    unset and a weekly `every` when it is 1, so older rows keep exactly their shape (D59)."""
     _require_anchored(rule)
     exclude: set[str] = set()
-    if isinstance(rule, WeeklyRule):
-        if rule.every == 1:
-            exclude.add("every")
-        if rule.start is None:
-            exclude.add("start")
+    if isinstance(rule, WeeklyRule) and rule.every == 1:
+        exclude.add("every")
+    if rule.start is None:
+        exclude.add("start")
+    if rule.end is None:
+        exclude.add("end")
     return rule.model_dump(mode="json", exclude=exclude)
 
 
 def anchored(rule: RecurrenceRule, tz: ZoneInfo, now: datetime) -> RecurrenceRule:
-    """The rule ready to store (D56). Call it when a rule is created or its `start` changes.
+    """The rule ready to store (D56, D75). Call it when a rule is created or changed.
 
-    A weekly rule with `start` must have it at most `START_AHEAD_MAX_DAYS` after today in
-    `tz`. A weekly rule with `every` ≥ 2 and no `start` gets the local date of its next
-    occurrence as a plain weekly rule, so its first reminder is the soonest possible. Other
-    rules come back unchanged.
+    A `start` must be at most `START_AHEAD_MAX_DAYS` after today in `tz` (every rule type).
+    A weekly rule with `every` ≥ 2 and no `start` gets the local date of its next
+    occurrence as a plain weekly rule, so its first reminder is the soonest possible (today
+    when nothing is left before its `end`). Whether anything is left before `end` is the
+    caller's check (an edit may allow nothing, D75).
     """
     if now.tzinfo is None:
         raise ValueError("naive datetime; use timezone-aware UTC")
-    if not isinstance(rule, WeeklyRule):
-        return rule
+    today = now.astimezone(tz).date()
     if rule.start is not None:
-        latest = now.astimezone(tz).date() + timedelta(days=START_AHEAD_MAX_DAYS)
-        if rule.start > latest:
+        if rule.start > today + timedelta(days=START_AHEAD_MAX_DAYS):
             raise InvalidRule("`start` can be at most a year ahead.")
         return rule
-    if rule.every == 1:
+    if not isinstance(rule, WeeklyRule) or rule.every == 1:
         return rule
     first = next_occurrence(rule.model_copy(update={"every": 1}), tz, now)
-    return rule.model_copy(update={"start": first.astimezone(tz).date()})
+    return rule.model_copy(update={"start": first.astimezone(tz).date() if first else today})
 
 
 # --- occurrences -------------------------------------------------------------------------
@@ -250,6 +266,8 @@ def _monday(d: date) -> date:
 
 
 def _matches(rule: RecurrenceRule, d: date) -> bool:
+    if (rule.start is not None and d < rule.start) or (rule.end is not None and d > rule.end):
+        return False
     match rule:
         case DailyRule():
             return True
@@ -258,8 +276,6 @@ def _matches(rule: RecurrenceRule, d: date) -> bool:
                 return False
             if rule.start is None:
                 return True
-            if d < rule.start:
-                return False
             weeks = (_monday(d) - _monday(rule.start)).days // 7
             return weeks % rule.every == 0
         case MonthlyRule():
@@ -274,17 +290,20 @@ def _matches(rule: RecurrenceRule, d: date) -> bool:
             return d.day == target
 
 
-def next_occurrence(rule: RecurrenceRule, tz: ZoneInfo, after: datetime) -> datetime:
-    """The first occurrence strictly after `after`, as aware UTC."""
+def next_occurrence(rule: RecurrenceRule, tz: ZoneInfo, after: datetime) -> datetime | None:
+    """The first occurrence strictly after `after`, as aware UTC. None: the series is over
+    (nothing left on or before `end`, D76)."""
     if after.tzinfo is None:
         raise ValueError("naive datetime; use timezone-aware UTC")
     _require_anchored(rule)
     # Start a day early: cheap insurance against DST edge cases around local midnight.
     first_day = after.astimezone(tz).date() - timedelta(days=1)
-    if isinstance(rule, WeeklyRule) and rule.start is not None:
+    if rule.start is not None:
         first_day = max(first_day, rule.start)  # nothing fires before `start`
     for offset in range(MAX_SEARCH_DAYS):
         d = first_day + timedelta(days=offset)
+        if rule.end is not None and d > rule.end:
+            return None
         if not _matches(rule, d):
             continue
         # Resolving can reorder or merge times on a DST day (02:30 in a gap becomes 03:30),
@@ -302,7 +321,7 @@ def occurrences_between(
     _require_anchored(rule)
     result: list[datetime] = []
     at = next_occurrence(rule, tz, start - timedelta(microseconds=1))
-    while at < end:
+    while at is not None and at < end:
         result.append(at)
         at = next_occurrence(rule, tz, at)
     return result
@@ -324,8 +343,19 @@ def _ordinal(n: int) -> str:
     return f"{n}{suffix}"
 
 
-def describe(rule: RecurrenceRule, tz: ZoneInfo) -> str:
-    """Human description in 24h wall-clock time, e.g. "Every day at 08:00 (UTC)"."""
+def describe(rule: RecurrenceRule, tz: ZoneInfo, today: date | None = None) -> str:
+    """Human description in 24h wall-clock time, e.g. "Every day at 08:00 (UTC)", with
+    ", from DD-MM-YYYY" while `start` is after `today` (always when `today` is None) and
+    ", until DD-MM-YYYY" (D80)."""
+    text = _describe_pattern(rule, tz)
+    if rule.start is not None and (today is None or rule.start > today):
+        text += f", from {plain_date(rule.start)}"
+    if rule.end is not None:
+        text += f", until {plain_date(rule.end)}"
+    return text
+
+
+def _describe_pattern(rule: RecurrenceRule, tz: ZoneInfo) -> str:
     at = f"at {_join([_hhmm(t) for t in rule.times])} ({tz.key})"
     match rule:
         case DailyRule():

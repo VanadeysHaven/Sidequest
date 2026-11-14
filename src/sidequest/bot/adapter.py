@@ -20,6 +20,7 @@ from typing import Any, Protocol, cast
 import discord
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from sidequest.bot.options import CLEAR, EditDate, is_clear
 from sidequest.core.errors import InvalidOperation
 from sidequest.core.timeparse import is_weekday_word, parse_date, parse_time
 from sidequest.core.tz import get_zone
@@ -164,6 +165,15 @@ async def local_date(uow: Uow, actor: Actor, text: str, tz: str | None) -> date:
     the to-do will use."""
     zone = get_zone(await zone_name(uow, actor, tz))
     return parse_date(text, uow.clock.now().astimezone(zone).date())
+
+
+async def edit_date(uow: Uow, actor: Actor, text: str | None, tz: str | None) -> EditDate:
+    """A `/todo edit` `start`/`end` option: None (not given), `CLEAR` (`none`), or a date."""
+    if not text:
+        return None
+    if is_clear(text):
+        return CLEAR
+    return await local_date(uow, actor, text, tz)
 
 
 # --- after a service call ----------------------------------------------------------------

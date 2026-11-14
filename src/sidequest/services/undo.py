@@ -1,4 +1,4 @@
-"""Undo a check-off (D60–D66).
+"""Undo a check-off (D60–D66, D79).
 
 The check-off services return an `UndoToken` with the state from before; the bot keeps it
 in memory (no storage, D66). `undo` re-checks everything against the database first and
@@ -41,7 +41,9 @@ def later_first(title: str) -> InvalidOperation:
 async def undo(uow: Uow, actor: Actor, token: UndoToken) -> Outcome[Undone]:
     """Put a check-off back (D63): the to-do and occurrence as they were, the follow-up
     occurrence the check-off created cancelled, reset subtask ticks restored. A reminder
-    that was up is marked sent again without a message and returned as `repost` (D64)."""
+    that was up is marked sent again without a message and returned as `repost` (D64).
+    A to-do the check-off marked done (one-time, or a repeating one's last, D79) is open
+    again, unless an open to-do on its list has taken the name since."""
     todo = await c.load_todo(uow, actor, token.todo_id, lock=True)
     if todo.status == TodoStatus.CANCELLED:
         raise NotFound(c.NOT_FOUND)
@@ -55,19 +57,19 @@ async def undo(uow: Uow, actor: Actor, token: UndoToken) -> Outcome[Undone]:
     if resend and c.find(open_occs, OccurrenceStatus.SENT) is not None:
         raise next_sent(todo.title)  # one sent reminder per to-do (D7)
 
-    if todo.kind == TodoKind.RECURRING:
+    if _finished(todo, token):
+        await c.require_unique_title(uow, todo.list, todo.title, exclude_todo_id=todo.id)
+        todo.status = TodoStatus.OPEN
+        todo.completed_at = None
+        todo.completed_by = None
+        await c.flush_titles(uow, todo.title, todo.list.name)
+    else:  # a repeating to-do that goes on: the check-off left a follow-up
         followup = await _followup(uow, todo, token)
         if token.previous == OccurrenceStatus.PENDING:
             # The check-off scheduled the next one; free the one-pending slot again.
             followup.status = OccurrenceStatus.CANCELLED
             await uow.session.flush()
             changed = True
-    else:
-        await c.require_unique_title(uow, todo.list, todo.title, exclude_todo_id=todo.id)
-        todo.status = TodoStatus.OPEN
-        todo.completed_at = None
-        todo.completed_by = None
-        await c.flush_titles(uow, todo.title, todo.list.name)
 
     if occ is not None:
         occ.completed_at = None
@@ -96,7 +98,7 @@ async def _checked_off(uow: Uow, actor: Actor, todo: Todo, token: UndoToken) -> 
     checked off, by this actor, within the undo window."""
     occ: Occurrence | None = None
     if token.occurrence_id is None:
-        if todo.kind != TodoKind.ONCE:
+        if not _finished(todo, token):
             raise InvalidOperation(NOT_CHECKED_OFF)
         done = todo.status == TodoStatus.DONE
         completed_at, completed_by = todo.completed_at, todo.completed_by
@@ -107,7 +109,7 @@ async def _checked_off(uow: Uow, actor: Actor, todo: Todo, token: UndoToken) -> 
         if token.previous not in c.OPEN_OCCURRENCE:
             raise InvalidOperation(NOT_CHECKED_OFF)
         done = occ.status == OccurrenceStatus.DONE and (
-            todo.kind == TodoKind.RECURRING or todo.status == TodoStatus.DONE
+            not _finished(todo, token) or todo.status == TodoStatus.DONE
         )
         completed_at, completed_by = occ.completed_at, occ.completed_by
     if not done:
@@ -117,6 +119,11 @@ async def _checked_off(uow: Uow, actor: Actor, todo: Todo, token: UndoToken) -> 
     if completed_at is None or uow.clock.now() - completed_at > UNDO_WINDOW:
         raise InvalidOperation(TOO_LATE)
     return occ
+
+
+def _finished(todo: Todo, token: UndoToken) -> bool:
+    """Whether the check-off marked the to-do done (one-time, or the last one, D78)."""
+    return todo.kind == TodoKind.ONCE or token.finished
 
 
 async def _followup(uow: Uow, todo: Todo, token: UndoToken) -> Occurrence:

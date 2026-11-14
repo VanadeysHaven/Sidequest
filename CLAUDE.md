@@ -1,6 +1,6 @@
 # Sidequest — what Claude Code needs to know
 
-> Written by Claude (Opus 5.5), 2026-11-12; updated 2026-11-14. Replaces the segment setup (S1–S9), which
+> Written by Claude (Opus 5.5), 2026-11-12; updated 2026-11-14 (start/end dates). Replaces the segment setup (S1–S9), which
 > is archived in `docs/claude/archive/initial-release/`. Read this file, then only the brief for the feature
 > you're working on.
 
@@ -100,7 +100,7 @@ bot/ (discord)   scheduler/ (no discord)   [web/ later]
 | `cli.py`, `config.py`, `logging.py`, `health.py` | CLI (`sidequest`, `migrate`, `healthcheck`), settings, logging, heartbeat watchdog |
 | `core/` | `clock` (`Clock` protocol, `SystemClock`), `timeparse`, `tz`, `recurrence` (rules, `next_occurrence`, `describe`, `anchored`), `discord_time`, `enums`, `errors`, `limits`, `text` (`bold()` for service messages) |
 | `db/` | `base`, `models` (full schema), `session`, `migrate` |
-| `services/` | `todos`, `occurrences` (check-off, upcoming, scheduler API), `undo`, `subtasks`, `lists`, `settings`, `permissions`, `retention`, `meta`; plumbing: `uow`, `actor`, `dto`, `effects`, `model` (`StrictModel`), `_common` (shared helpers) |
+| `services/` | `todos`, `occurrences` (check-off, upcoming, scheduler API), `undo`, `subtasks`, `lists`, `settings`, `permissions`, `retention`, `meta`; plumbing: `uow`, `actor`, `dto`, `effects`, `model` (`StrictModel`), `_common` (shared helpers), `_series` (last occurrence, D75 check) |
 | `scheduler/` | `loop` (`Scheduler`), `notifier` (Protocol), `signal` (`ScheduleSignal`), `retention` |
 | `bot/` | `client`, `adapter` (glue: `actor_from`, `uows`, `apply`, `reply`, `defer`, …), `render` (all embeds/text, no I/O), `options` (option → rule/patch parsing), `autocomplete`, `errors`, `notifier` (`DiscordNotifier`) |
 | `bot/commands/` | `todo` (+ `todo_edit`, `todo_list`, `todo_manage`, `todo_view`), `repeat`, `subtask`, `lists`, `settings`, `admin`, `about`, `common` |
@@ -176,17 +176,33 @@ every check.
   time is still refused.
 
 ### Repeating rules (`core/recurrence.py`, stored as JSONB)
-Daily · weekly (weekdays, `every` 1–52 weeks, optional `start` date; weeks run Mon–Sun) · monthly by
-n-th weekday (1st–4th, last) · monthly by day (1–31, last; missing days fall back to the month's last
-day). Multiple times per day. Times are wall-clock in the to-do's zone; a DST gap shifts forward, an
-ambiguous time fires once (first instance). Changing the rule *type* on edit is refused ("delete and add
-again").
+Daily · weekly (weekdays, `every` 1–52 weeks; weeks run Mon–Sun) · monthly by n-th weekday
+(1st–4th, last) · monthly by day (1–31, last; missing days fall back to the month's last day). Multiple
+times per day. Times are wall-clock in the to-do's zone; a DST gap shifts forward, an ambiguous time
+fires once (first instance). Changing the rule *type* on edit is refused ("delete and add again").
+
+Every rule may have a `start` and an `end` date (D73–D75; inclusive, in the to-do's zone, JSON keys
+only when set): the first reminder is the first match on or after `start`, the last the last match on
+or before `end`. `start` ≤ a year ahead; `end` ≥ `start`; a rule with nothing left between now (or
+`start`) and `end` is refused (on edit allowed while a reminder is up: that one becomes the last).
+With weekly `every` ≥ 2, `start` also picks the on-weeks. `/todo edit start:none` / `end:none` removes
+them. `next_occurrence` returns None once the series is over. The description ends with
+", from DD-MM-YYYY" (while `start` is ahead) and ", until DD-MM-YYYY"; plain dates are `DD-MM-YYYY`
+(`core.text.plain_date`), not timestamps.
 
 ### Occurrences and reminders
 - `occurrences` are concrete reminder instances. Status flow: `pending` → `sent` → `done` / `missed`;
   `pending` → `done` (checked off early) or `cancelled` (edited/deleted); `sent` → `failed`.
-- At most one `pending` and one `sent` per to-do (partial unique indexes). A repeating to-do always
-  has exactly one pending future occurrence.
+- At most one `pending` and one `sent` per to-do (partial unique indexes). A repeating to-do has
+  exactly one pending future occurrence, **except after its last one** (D76): past `end` nothing is
+  scheduled and the last reminder stays up until it's checked off (after downtime, the one catch-up
+  reminder is the last). `TodoView.final_occurrence_id` / `ends_on` (`services/_series.py`); the
+  display says "Next (last): …" (also in the check-off reply), "Last reminder — nothing after this
+  one", "🔁 last: …" (D80).
+- **The last check-off** (D77–D79) needs no extra confirmation (only the D67 question, as for any
+  check-off) and marks the to-do **done** like a one-time to-do; its name is free again. The reply
+  says "✅ Checked off **title**. This was the last occurance of this reminder, …" (`render.LAST_DONE`). Undo reopens it (`UndoToken.finished`), refused on a title
+  clash. `/todo done` on a run-out to-do with nothing open (its last reminder failed) marks it done.
 - Reminders go to the server's one reminder channel (Manage Server sets/clears it), ping the assignees
   (users only), show an embed (title, details, due, rule, subtasks, list name) with a **Done** button and
   subtask select(s). Without a channel a due reminder is marked `failed` (`no_channel`).
@@ -195,7 +211,8 @@ again").
   (`render.done_text`). `/todo show` → Done turns the message into just that line.
 - **Non-assignees confirm** (D67): anyone who isn't an assignee (owners and Manage Server included)
   gets "**title** is assigned to @A and @B, not you. Check it off anyway?" before checking off, in all
-  four places. Ticking subtasks never asks. `views/confirm.py` (`must_confirm`, `CheckOffConfirmView`).
+  four places. Ticking subtasks never asks. `views/confirm.py` (`must_confirm`, `check_off_question`,
+  `CheckOffConfirmView`).
 - **Undo** (D60–D69): every check-off reply has an Undo button (`/todo upcoming`: an "Undo a
   check-off…" select). The check-off services return `CheckedOff(todo, undo: UndoToken)`; the token
   (previous occurrence status, the pending follow-up's id, reset subtask ticks) lives only in the
@@ -271,9 +288,17 @@ and are added here and in the feature's brief.
 | D70 | Every date option accepts a weekday name (the single-day `days` words, any case) → the next date with that weekday, in the to-do's zone. |
 | D71 | Weekday = today: with a time, today if the moment is still to come, else next week; for date-only options today counts. `today` itself still refuses a past moment. |
 | D72 | `DATE_HINT` and date option descriptions mention "a weekday (e.g. monday)"; `next monday` is not supported. |
+| D73 | All four `/todo repeat` commands have `start` and `end` (inclusive dates, weekday names work); `/todo edit` has both for every rule type, `none` removes one. Weekly `every` ≥ 2 keeps D54–D59. |
+| D74 | First = first match on/after `start`, last = last match on/before `end`; they needn't be matching days. |
+| D75 | `start` ≤ a year ahead (all rules), `end` ≥ `start`, something must fall between now (or `start`) and `end` ("No reminder of **title** falls between … and …"); on edit allowed while a reminder is up, which becomes the last. |
+| D76 | After the last occurrence nothing is scheduled; the last reminder stays up until checked off; after downtime the one catch-up reminder is the last. |
+| D77 | No extra confirmation for the last occurrence (changed by Tim after the build; only D67 applies). |
+| D78 | The last check-off marks the to-do done (history, off the lists); its name is free at once. |
+| D79 | Undo of the last check-off reopens the to-do; refused when an open to-do has taken the name. |
+| D80 | Descriptions end with ", from DD-MM-YYYY" (while ahead) and ", until DD-MM-YYYY"; "Next (last): …", "Last reminder — nothing after this one", "🔁 last: …". |
 
-**Out of scope for now:** web frontend · snooze · role assignees · every N days / N months · start dates
-for daily/monthly rules · date-only to-dos · per-server default timezone · localisation · digests.
+**Out of scope for now:** web frontend · snooze · role assignees · every N days / N months ·
+date-only to-dos · per-server default timezone · localisation · digests.
 
 ---
 

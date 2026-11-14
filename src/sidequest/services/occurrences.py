@@ -61,7 +61,7 @@ async def list_upcoming(
         UpcomingItem(
             occurrence_id=occ.id,
             due_at=occ.due_at,
-            todo=c.todo_view(actor, todo, occs[todo.id]),
+            todo=c.todo_view(actor, todo, occs[todo.id], uow.clock.now()),
         )
         for occ, todo in rows
     ]
@@ -162,7 +162,8 @@ async def claim_due(uow: Uow, now: datetime, limit: int = 20) -> list[DueReminde
     are skipped and picked up next round. Repeating to-dos: the previous unchecked
     reminder becomes missed (its message is returned for deletion, D7), subtasks reset,
     and the next occurrence after `now` is scheduled, so an outage yields one catch-up
-    reminder, not a flood.
+    reminder, not a flood. Past the rule's `end` nothing is scheduled: that reminder is the
+    last and stays up until it is checked off (D76).
     """
     rows = (
         await uow.session.execute(
@@ -306,7 +307,7 @@ async def _reminders(
         reminders.append(
             DueReminder(
                 occurrence=c.occurrence_view(occ),
-                todo=c.todo_view(_SYSTEM, todo, open_occs[todo.id]),
+                todo=c.todo_view(_SYSTEM, todo, open_occs[todo.id], uow.clock.now()),
                 channel_id=channels.get(todo.guild_id),
                 effects=effects,
             )

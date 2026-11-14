@@ -7,6 +7,7 @@ import discord
 from discord import app_commands
 
 from sidequest.bot import adapter, render
+from sidequest.bot.options import is_clear
 from sidequest.bot.views.modals import CreateWithDetailsModal
 from sidequest.core.limits import WEEK_INTERVAL_MAX
 from sidequest.core.timeparse import parse_date, parse_time
@@ -35,11 +36,17 @@ CREATE_DESCRIPTIONS: dict[str, str] = {
 Title = app_commands.Range[str, 1, 200]
 Every = app_commands.Range[int, 1, WEEK_INTERVAL_MAX]
 
-# Weekly-rule options shared by `/todo repeat weekly` and `/todo edit` (S9).
+# Rule options shared by `/todo repeat …` and `/todo edit` (S9, D73).
 EVERY_DESCRIPTION = "Repeat every N weeks (default 1)"
 START_DESCRIPTION = (
     "Don't start before this date (or a weekday); with every ≥ 2 it also picks the weeks"
 )
+"""`start` on `/todo repeat weekly`."""
+START_PLAIN_DESCRIPTION = "Don't start before this date (or a weekday)"
+"""`start` on the other `/todo repeat` commands."""
+END_DESCRIPTION = "Last day it may remind (a date or a weekday)"
+EDIT_START_DESCRIPTION = "Repeating: don't start before this date (or a weekday; none removes it)"
+EDIT_END_DESCRIPTION = "Repeating: last day it may remind (a date or a weekday; none removes it)"
 type Create = Callable[[Uow, Actor, str, str | None], Awaitable[Outcome[TodoView]]]
 
 
@@ -55,7 +62,7 @@ def check_options(
     adapter.parse_list_id(list_value)
     if time_text:
         parse_time(time_text)
-    if date_text:
+    if date_text and not is_clear(date_text):
         parse_date(date_text, date(2000, 1, 1))  # format only; resolved later in the right zone
     if timezone:
         get_zone(timezone)

@@ -14,9 +14,10 @@ ping the assignees. Sidequest only works in servers (no DMs).
   Everyone picks their own default list with `/settings default-list`.
 - **One-time to-dos**, with or without a date and time (`HH:MM`, 24-hour). Dates can be
   written as `2026-11-16`, `16-11-2026`, `today`, `tomorrow` or a weekday (`monday`).
-- **Repeating to-dos:** daily, weekly (several days, optionally every 2–52 weeks and from a
-  start date), monthly on a weekday ("first Sunday") or on a day of the month ("the 15th",
-  "last day"), each with one or more times.
+- **Repeating to-dos:** daily, weekly (several days, optionally every 2–52 weeks), monthly on
+  a weekday ("first Sunday") or on a day of the month ("the 15th", "last day"), each with one
+  or more times. Each can have a start and an end date; after the last reminder is checked
+  off, the to-do is done.
 - **Subtasks** (up to 50 per to-do) and long multi-line **details**.
 - **Reminders** with a **Done** button and subtask checkboxes; whoever may work on the list
   can check it off. An unchecked reminder of a repeating to-do is replaced by the next one.

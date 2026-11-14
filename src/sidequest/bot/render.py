@@ -53,11 +53,33 @@ def mentions(user_ids: Sequence[int]) -> str:
     return ", ".join(f"<@{user_id}>" for user_id in user_ids)
 
 
+LAST_UP = "Last reminder — nothing after this one"
+
+
+def _next_is_last(todo: TodoView) -> bool:
+    return todo.final_occurrence_id is not None and (
+        todo.final_occurrence_id == todo.pending_occurrence_id
+    )
+
+
+def _last_is_up(todo: TodoView) -> bool:
+    return (
+        todo.pending_occurrence_id is None
+        and todo.reminder is not None
+        and todo.final_occurrence_id == todo.reminder.id
+    )
+
+
 def when(todo: TodoView) -> str:
-    """Due time, repeat rule + next occurrence, or "No reminder"."""
+    """Due time, repeat rule + next occurrence ("Next (last)" for the final one, D80), or
+    "No reminder"."""
     if todo.kind == TodoKind.RECURRING:
-        nxt = ts_due(todo.next_due_at) if todo.next_due_at else "nothing scheduled"
-        return f"{todo.rule_description}\nNext: {nxt}"
+        if todo.next_due_at is not None:
+            label = "Next (last)" if _next_is_last(todo) else "Next"
+            return f"{todo.rule_description}\n{label}: {ts_due(todo.next_due_at)}"
+        if _last_is_up(todo):
+            return f"{todo.rule_description}\n{LAST_UP}"
+        return f"{todo.rule_description}\nNext: nothing scheduled"
     if todo.due_at is not None:
         return f"Due {ts_due(todo.due_at)}"
     return "No reminder (untimed)"
@@ -66,9 +88,13 @@ def when(todo: TodoView) -> str:
 def short_when(todo: TodoView) -> str:
     """One-line timing for list rows."""
     if todo.kind == TodoKind.RECURRING:
-        if todo.next_due_at is None:
-            return "🔁 nothing scheduled"
-        return f"🔁 {ts(todo.next_due_at, 'f')} ({ts(todo.next_due_at, 'R')})"
+        if todo.next_due_at is not None:
+            last = "last: " if _next_is_last(todo) else ""
+            return f"🔁 {last}{ts(todo.next_due_at, 'f')} ({ts(todo.next_due_at, 'R')})"
+        if _last_is_up(todo) and todo.reminder is not None:
+            due = todo.reminder.due_at
+            return f"🔁 last: {ts(due, 'f')} ({ts(due, 'R')})"
+        return "🔁 nothing scheduled"
     if todo.due_at is not None:
         return f"{ts(todo.due_at, 'f')} ({ts(todo.due_at, 'R')})"
     return "no reminder"
@@ -94,11 +120,23 @@ def moved_text(todo: TodoView) -> str:
     return f"📦 Moved **{esc(todo.title)}** to **{esc(todo.list_name)}**."
 
 
+LAST_DONE = (
+    "This was the last occurrence of this reminder, it will not appear again. "
+    "You can still re-open it by clicking undo."
+)
+
+
 def done_text(todo: TodoView) -> str:
-    """The reply after checking something off (same wording everywhere, D37)."""
+    """The reply after checking something off (same wording everywhere, D37). For a repeating
+    to-do: "Next (last): …" when the next one is the final one, and the last check-off says
+    so (D78, D80)."""
     text = f"✅ Checked off **{esc(todo.title)}**."
-    if todo.kind == TodoKind.RECURRING and todo.next_due_at is not None:
-        text += f" Next: {ts_due(todo.next_due_at)}"
+    if todo.kind == TodoKind.RECURRING:
+        if todo.status == TodoStatus.DONE:
+            text += f" {LAST_DONE}"
+        elif todo.next_due_at is not None:
+            label = "Next (last)" if _next_is_last(todo) else "Next"
+            text += f" {label}: {ts_due(todo.next_due_at)}"
     return text
 
 

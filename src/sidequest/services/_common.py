@@ -16,7 +16,7 @@ from sidequest.core.limits import DETAILS_MAX, TITLE_MAX
 from sidequest.core.text import bold
 from sidequest.core.tz import get_zone
 from sidequest.db.models import GuildSettings, Occurrence, Todo, TodoList, UserSettings
-from sidequest.services import permissions
+from sidequest.services import _series, permissions
 from sidequest.services.actor import Actor
 from sidequest.services.dto import OccurrenceView, SubtaskTick, SubtaskView, TodoView, UndoToken
 from sidequest.services.effects import DeleteMessage, Effect
@@ -240,10 +240,11 @@ def add_pending(uow: Uow, todo: Todo, due_at: datetime) -> Occurrence:
     return occ
 
 
-def add_next_pending(uow: Uow, todo: Todo, after: datetime) -> Occurrence:
-    """Materialize the recurring to-do's next occurrence strictly after `after`."""
+def add_next_pending(uow: Uow, todo: Todo, after: datetime) -> Occurrence | None:
+    """Materialize the recurring to-do's next occurrence strictly after `after`. None: the
+    series is over (past its `end`, D76) and nothing was added."""
     due = recurrence.next_occurrence(rule_of(todo), get_zone(todo.timezone), after)
-    return add_pending(uow, todo, due)
+    return add_pending(uow, todo, due) if due is not None else None
 
 
 def close(
@@ -283,11 +284,15 @@ def occurrence_view(occ: Occurrence) -> OccurrenceView:
     )
 
 
-def todo_view(actor: Actor, todo: Todo, occurrences: Sequence[Occurrence]) -> TodoView:
+def todo_view(
+    actor: Actor, todo: Todo, occurrences: Sequence[Occurrence], now: datetime
+) -> TodoView:
     """Map a loaded to-do (assignees + subtasks) and its open occurrences to a view."""
     rule = rule_of(todo) if todo.kind == TodoKind.RECURRING else None
+    zone = get_zone(todo.timezone)
     pending = find(occurrences, OccurrenceStatus.PENDING)
     sent = find(occurrences, OccurrenceStatus.SENT)
+    final = _series.final_occurrence(rule, zone, pending, sent) if rule else None
     assignees = assignee_ids(todo)
     return TodoView(
         id=todo.id,
@@ -302,10 +307,14 @@ def todo_view(actor: Actor, todo: Todo, occurrences: Sequence[Occurrence]) -> To
         timezone=todo.timezone,
         due_at=todo.due_at,
         rule=rule,
-        rule_description=recurrence.describe(rule, get_zone(todo.timezone)) if rule else None,
+        rule_description=(
+            recurrence.describe(rule, zone, now.astimezone(zone).date()) if rule else None
+        ),
         next_due_at=pending.due_at if pending else None,
         pending_occurrence_id=pending.id if pending else None,
         reminder=occurrence_view(sent) if sent else None,
+        final_occurrence_id=final.id if final else None,
+        ends_on=rule.end if rule else None,
         assignee_ids=assignees,
         subtasks=tuple(
             SubtaskView(
@@ -330,7 +339,7 @@ async def view_of(uow: Uow, actor: Actor, todo: Todo) -> TodoView:
     """Flush pending changes, then build a fresh view of one to-do."""
     await uow.session.flush()
     occs = await open_occurrences(uow, [todo.id])
-    return todo_view(actor, todo, occs[todo.id])
+    return todo_view(actor, todo, occs[todo.id], uow.clock.now())
 
 
 # --- completing --------------------------------------------------------------------------
@@ -348,8 +357,9 @@ async def finish_occurrence(
     """Check off one open occurrence. Returns (effects, changed_schedule, undo token).
 
     One-time: the to-do is done. Recurring: subtasks reset (D4) and, if the pending slot
-    is now free, the next occurrence after this one is materialized. The token records
-    the state from before (D63, D66).
+    is now free, the next occurrence after this one is materialized; when there is none
+    (the series is over, D76) the to-do is done (D78). The token records the state from
+    before (D63, D66).
     """
     now = uow.clock.now()
     previous = occ.status
@@ -371,8 +381,18 @@ async def finish_occurrence(
         await uow.session.flush()  # free the one-pending-per-to-do slot first
         pending = add_next_pending(uow, todo, after=max(occ.due_at, now))
         changed = True
+    finished = pending is None
+    if finished:
+        mark_todo_done(todo, actor, now)
     await uow.session.flush()  # the follow-up's id
-    token = undo_token(todo, occ.id, previous, followup_id=pending.id, ticks=ticks)
+    token = undo_token(
+        todo,
+        occ.id,
+        previous,
+        followup_id=pending.id if pending else None,
+        ticks=ticks,
+        finished=finished,
+    )
     return effects, changed, token
 
 
@@ -383,6 +403,7 @@ def undo_token(
     *,
     followup_id: int | None = None,
     ticks: tuple[SubtaskTick, ...] = (),
+    finished: bool = False,
 ) -> UndoToken:
     return UndoToken(
         todo_id=todo.id,
@@ -390,4 +411,5 @@ def undo_token(
         previous=previous,
         followup_id=followup_id,
         ticks=ticks,
+        finished=finished,
     )

@@ -38,7 +38,22 @@ class WeekdayOption(enum.Enum):
     Sunday = "sun"
 
 
-REPEAT_ONLY = ("times", "days", "week", "weekday", "day", "every", "start")
+class Clear(enum.Enum):
+    """`start:none` / `end:none` in `/todo edit`: remove the date (D73)."""
+
+    CLEAR = "none"
+
+
+CLEAR = Clear.CLEAR
+type EditDate = date | Clear | None
+"""A `/todo edit` date option: a date, `CLEAR`, or None (not given)."""
+
+
+def is_clear(text: str) -> bool:
+    return text.strip().lower() == CLEAR.value
+
+
+REPEAT_ONLY = ("times", "days", "week", "weekday", "day", "every", "start", "end")
 
 
 def edit_patch(
@@ -53,7 +68,8 @@ def edit_patch(
     weekday: WeekdayOption | None = None,
     day: str | None = None,
     every: int | None = None,
-    start: date | None = None,
+    start: EditDate = None,
+    end: EditDate = None,
 ) -> TodoPatch:
     """`/todo edit` options → `TodoPatch`, checked against the to-do's kind and rule type.
 
@@ -72,6 +88,7 @@ def edit_patch(
         "day": day,
         "every": every,
         "start": start,
+        "end": end,
     }
     if todo.kind == TodoKind.RECURRING:
         if due is not None:
@@ -86,8 +103,8 @@ def edit_patch(
     else:
         if any(value is not None for value in rule_parts.values()):
             raise InvalidOperation(
-                "`times`, `days`, `week`, `weekday`, `day`, `every` and `start` are for "
-                "repeating to-dos. "
+                "`times`, `days`, `week`, `weekday`, `day`, `every`, `start` and `end` are "
+                "for repeating to-dos. "
                 "Use `date` and `time` here."
             )
         if due is not None:
@@ -123,6 +140,12 @@ def weekly_rule(days: str, times: str, every: int = 1, start: date | None = None
     )
 
 
+def with_window[R: RecurrenceRule](rule: R, start: date | None, end: date | None) -> R:
+    """`rule` with the `start`/`end` options (D73), validated (`end` before `start` is
+    refused)."""
+    return type(rule)(**{**rule.model_dump(), "start": start, "end": end})
+
+
 def monthly_weekday_rule(week: WeekOption, weekday: WeekdayOption, times: str) -> MonthlyRule:
     return MonthlyRule(week=week.value, weekday=Weekday(weekday.value), times=parse_times(times))
 
@@ -131,11 +154,13 @@ def monthly_day_rule(day: str, times: str) -> MonthlyDayRule:
     return MonthlyDayRule(day=parse_month_day(day), times=parse_times(times))
 
 
+_WINDOW = {"start", "end"}
+"""Every rule type has them (D73)."""
 _RULE_FIELDS: dict[type, set[str]] = {
-    DailyRule: {"times"},
-    WeeklyRule: {"times", "days", "every", "start"},
-    MonthlyRule: {"times", "week", "weekday"},
-    MonthlyDayRule: {"times", "day"},
+    DailyRule: {"times"} | _WINDOW,
+    WeeklyRule: {"times", "days", "every"} | _WINDOW,
+    MonthlyRule: {"times", "week", "weekday"} | _WINDOW,
+    MonthlyDayRule: {"times", "day"} | _WINDOW,
 }
 _KIND_NAMES: dict[type, str] = {
     DailyRule: "daily",
@@ -154,12 +179,14 @@ def edited_rule(
     weekday: WeekdayOption | None = None,
     day: str | None = None,
     every: int | None = None,
-    start: date | None = None,
+    start: EditDate = None,
+    end: EditDate = None,
 ) -> RecurrenceRule | None:
     """`rule` with the given parts replaced (None: nothing given). The rule type stays;
     an option that belongs to another rule type is an error (BRIEF: switching type means
-    delete + re-create). A weekly rule keeps its stored `start` unless one is given (D57);
-    going to `every` ≥ 2 without one leaves it for the service to anchor."""
+    delete + re-create). A rule keeps its stored `start`/`end` unless one is given (D57);
+    `CLEAR` removes it (D73). A weekly rule with `every` ≥ 2 and no `start` (cleared, or
+    going to `every` ≥ 2 without one) is left for the service to anchor (D56)."""
     given = {
         name
         for name, value in {
@@ -170,6 +197,7 @@ def edited_rule(
             "day": day,
             "every": every,
             "start": start,
+            "end": end,
         }.items()
         if value is not None
     }
@@ -196,6 +224,7 @@ def edited_rule(
         changes["day"] = parse_month_day(day)
     if every is not None:
         changes["every"] = every
-    if start is not None:
-        changes["start"] = start
+    for name, value in (("start", start), ("end", end)):
+        if value is not None:
+            changes[name] = None if value is CLEAR else value
     return type(rule)(**{**rule.model_dump(), **changes})

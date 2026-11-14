@@ -7,8 +7,15 @@ from discord import app_commands
 
 from sidequest.bot import adapter, autocomplete, options
 from sidequest.bot.commands import common
-from sidequest.bot.commands.common import CREATE_DESCRIPTIONS, Every, Title
+from sidequest.bot.commands.common import (
+    CREATE_DESCRIPTIONS,
+    END_DESCRIPTION,
+    START_PLAIN_DESCRIPTION,
+    Every,
+    Title,
+)
 from sidequest.bot.options import WeekdayOption, WeekOption
+from sidequest.core.recurrence import RecurrenceRule
 from sidequest.services import todos
 from sidequest.services.actor import Actor
 from sidequest.services.dto import TodoView
@@ -26,10 +33,23 @@ def build_repeat_group() -> app_commands.Group:
     return group
 
 
+async def window[R: RecurrenceRule](
+    uow: Uow, actor: Actor, rule: R, start: str | None, end: str | None, tz: str | None
+) -> R:
+    """`rule` with the `start`/`end` options, as dates in the to-do's zone (D73)."""
+    start_date = await adapter.local_date(uow, actor, start, tz) if start else None
+    end_date = await adapter.local_date(uow, actor, end, tz) if end else None
+    return options.with_window(rule, start_date, end_date)
+
+
 def daily_command() -> app_commands.Command:  # type: ignore[type-arg]
     @app_commands.command(name="daily", description="Add a to-do that repeats every day")
     @app_commands.describe(**CREATE_DESCRIPTIONS)
-    @app_commands.describe(times="24-hour times, comma-separated, e.g. 08:00, 20:00")
+    @app_commands.describe(
+        times="24-hour times, comma-separated, e.g. 08:00, 20:00",
+        start=START_PLAIN_DESCRIPTION,
+        end=END_DESCRIPTION,
+    )
     @app_commands.rename(list_="list")
     @app_commands.autocomplete(timezone=autocomplete.timezone, list_=autocomplete.todo_list)
     async def daily(
@@ -41,9 +61,12 @@ def daily_command() -> app_commands.Command:  # type: ignore[type-arg]
         assignee2: discord.User | None = None,
         assignee3: discord.User | None = None,
         list_: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
         details: bool = False,
     ) -> None:
-        common.check_options(list_value=list_, timezone=timezone)
+        common.check_options(list_value=list_, date_text=start, timezone=timezone)
+        common.check_options(date_text=end)
         rule = options.daily_rule(times)
 
         async def create(uow: Uow, actor: Actor, title: str, text: str | None) -> Outcome[TodoView]:
@@ -52,7 +75,7 @@ def daily_command() -> app_commands.Command:  # type: ignore[type-arg]
                 actor,
                 list_id=adapter.parse_list_id(list_),
                 title=title,
-                rule=rule,
+                rule=await window(uow, actor, rule, start, end, timezone),
                 details=text,
                 timezone=timezone,
                 assignee_ids=adapter.user_ids([assignee, assignee2, assignee3]),
@@ -73,6 +96,7 @@ def weekly_command() -> app_commands.Command:  # type: ignore[type-arg]
         times="24-hour times, comma-separated, e.g. 08:00, 20:00",
         every=common.EVERY_DESCRIPTION,
         start=common.START_DESCRIPTION,
+        end=END_DESCRIPTION,
     )
     @app_commands.rename(list_="list")
     @app_commands.autocomplete(timezone=autocomplete.timezone, list_=autocomplete.todo_list)
@@ -88,19 +112,20 @@ def weekly_command() -> app_commands.Command:  # type: ignore[type-arg]
         list_: str | None = None,
         every: Every = 1,
         start: str | None = None,
+        end: str | None = None,
         details: bool = False,
     ) -> None:
         common.check_options(list_value=list_, date_text=start, timezone=timezone)
+        common.check_options(date_text=end)
         rule = options.weekly_rule(days, times, every)
 
         async def create(uow: Uow, actor: Actor, title: str, text: str | None) -> Outcome[TodoView]:
-            start_date = await adapter.local_date(uow, actor, start, timezone) if start else None
             return await todos.create_recurring(
                 uow,
                 actor,
                 list_id=adapter.parse_list_id(list_),
                 title=title,
-                rule=rule.model_copy(update={"start": start_date}),
+                rule=await window(uow, actor, rule, start, end, timezone),
                 details=text,
                 timezone=timezone,
                 assignee_ids=adapter.user_ids([assignee, assignee2, assignee3]),
@@ -121,6 +146,8 @@ def monthly_weekday_command() -> app_commands.Command:  # type: ignore[type-arg]
         week="Which week of the month",
         weekday="Day of the week",
         times="24-hour times, comma-separated, e.g. 08:00, 20:00",
+        start=START_PLAIN_DESCRIPTION,
+        end=END_DESCRIPTION,
     )
     @app_commands.rename(list_="list")
     @app_commands.autocomplete(timezone=autocomplete.timezone, list_=autocomplete.todo_list)
@@ -135,9 +162,12 @@ def monthly_weekday_command() -> app_commands.Command:  # type: ignore[type-arg]
         assignee2: discord.User | None = None,
         assignee3: discord.User | None = None,
         list_: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
         details: bool = False,
     ) -> None:
-        common.check_options(list_value=list_, timezone=timezone)
+        common.check_options(list_value=list_, date_text=start, timezone=timezone)
+        common.check_options(date_text=end)
         rule = options.monthly_weekday_rule(week, weekday, times)
 
         async def create(uow: Uow, actor: Actor, title: str, text: str | None) -> Outcome[TodoView]:
@@ -146,7 +176,7 @@ def monthly_weekday_command() -> app_commands.Command:  # type: ignore[type-arg]
                 actor,
                 list_id=adapter.parse_list_id(list_),
                 title=title,
-                rule=rule,
+                rule=await window(uow, actor, rule, start, end, timezone),
                 details=text,
                 timezone=timezone,
                 assignee_ids=adapter.user_ids([assignee, assignee2, assignee3]),
@@ -165,6 +195,8 @@ def monthly_day_command() -> app_commands.Command:  # type: ignore[type-arg]
     @app_commands.describe(
         day="Day of the month: 1–31 or last (missing days fall back to the month's last day)",
         times="24-hour times, comma-separated, e.g. 08:00, 20:00",
+        start=START_PLAIN_DESCRIPTION,
+        end=END_DESCRIPTION,
     )
     @app_commands.rename(list_="list")
     @app_commands.autocomplete(timezone=autocomplete.timezone, list_=autocomplete.todo_list)
@@ -178,9 +210,12 @@ def monthly_day_command() -> app_commands.Command:  # type: ignore[type-arg]
         assignee2: discord.User | None = None,
         assignee3: discord.User | None = None,
         list_: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
         details: bool = False,
     ) -> None:
-        common.check_options(list_value=list_, timezone=timezone)
+        common.check_options(list_value=list_, date_text=start, timezone=timezone)
+        common.check_options(date_text=end)
         rule = options.monthly_day_rule(day, times)
 
         async def create(uow: Uow, actor: Actor, title: str, text: str | None) -> Outcome[TodoView]:
@@ -189,7 +224,7 @@ def monthly_day_command() -> app_commands.Command:  # type: ignore[type-arg]
                 actor,
                 list_id=adapter.parse_list_id(list_),
                 title=title,
-                rule=rule,
+                rule=await window(uow, actor, rule, start, end, timezone),
                 details=text,
                 timezone=timezone,
                 assignee_ids=adapter.user_ids([assignee, assignee2, assignee3]),

@@ -165,6 +165,19 @@ start (`/todo repeat weekly` and `/todo edit` get `every` and `start`).
   `start`. To find them in the database:
   `SELECT id, title FROM todos WHERE recurrence ? 'every' OR recurrence ? 'start';`
 
+### Upgrading to dates-and-schedules (start/end dates, suspensions, per-day times)
+
+No migration: a normal `./update.sh`. The bot syncs its changed commands once on the first
+start (every `/todo repeat` command and `/todo edit` get `start` and `end`).
+
+- Existing repeating to-dos keep exactly their stored rule and keep repeating forever.
+- **Rolling back is unsafe** once a to-do uses `start`/`end` on a daily or monthly rule, an
+  `end` on any rule, a suspension or per-day times: older code rejects the new keys in the
+  stored rule (`extra="forbid"`) and the scheduler breaks on them. **Rollback = restore the
+  pre-upgrade backup** (section 7). To see which to-dos would be affected:
+  `SELECT id, title FROM todos WHERE recurrence ? 'end' OR (recurrence ? 'start' AND recurrence->>'type' <> 'weekly');`
+  (later segments add their own keys to this note).
+
 `docker compose down` stops the bot gracefully: it finishes the reminder it is posting
 (at most 5 s), closes the Discord connection and the database pool, and logs `Stopped`.
 

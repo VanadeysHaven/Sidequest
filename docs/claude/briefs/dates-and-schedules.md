@@ -1,6 +1,6 @@
 # Brief — Weekday dates, suspensions, per-day times, start and end dates
 
-**Status:** in progress (Segment 1 done; Segments 2–4 ready) · **Branch:** `claude/dates-and-schedules` · **Migration:** none (all new data lives in
+**Status:** in progress (Segments 1–2 done; Segments 3–4 ready) · **Branch:** `claude/dates-and-schedules` · **Migration:** none (all new data lives in
 the rule JSON) · Written by Claude (Opus 5.5), 2026-11-14.
 
 Four features, one segment each, **numbered in build order**: run Segment 1, 2, 3, 4, one per session.
@@ -74,7 +74,7 @@ Example (today Sat 14-11-2026): `monday` → 16-11-2026. On Monday 16-11 at 14:0
 | D74 | **First and last.** The first reminder is the first occurrence on or after `start`, the last is the last one on or before `end` (dates in the to-do's zone). `start`/`end` don't have to be matching days. | Tim, Claude (non-matching days) |
 | D75 | **Validation.** `start` at most a year ahead (`START_AHEAD_MAX_DAYS`, now for all rules); `end` ≥ `start`; at least one occurrence between now (or `start`) and `end`, else "No reminder of **title** falls between DD-MM-YYYY and DD-MM-YYYY." Exception on edit: when a reminder is up, an `end` that leaves nothing after it is allowed, and that reminder becomes the last. `end` has no upper limit. | Claude |
 | D76 | **Running out.** After the last occurrence is posted, nothing new is scheduled: a repeating to-do can now have **no pending occurrence**. Its last reminder stays up until it's checked off (nothing replaces it, so D7 doesn't apply). After downtime past `end`, the one catch-up reminder is the last. | Claude |
-| D77 | **Confirm the last one.** Checking off the last occurrence (reminder Done, `/todo done`, `/todo show` → Done, `/todo upcoming` early) first asks "This is the last reminder of **title** (it ends on DD-MM-YYYY). Checking it off marks the to-do done. Check it off?" with **Check off** / **Cancel**. When the D67 non-assignee question applies too, it's one message with both sentences. Ticking subtasks never asks. | Tim |
+| D77 | ~~**Confirm the last one.**~~ **Dropped (Tim, 2026-11-14, after the build): no extra confirmation; checking off the last one works like any check-off (D67 still applies).** Original: Checking off the last occurrence (reminder Done, `/todo done`, `/todo show` → Done, `/todo upcoming` early) first asks "This is the last reminder of **title** (it ends on DD-MM-YYYY). Checking it off marks the to-do done. Check it off?" with **Check off** / **Cancel**. When the D67 non-assignee question applies too, it's one message with both sentences. Ticking subtasks never asks. | Tim |
 | D78 | **The last check-off marks the to-do done**, like a one-time to-do (`completed_at/by` set, kept in history, off the open lists). **Its name is free again** at once (the open-title index only covers open to-dos, D44). | Tim |
 | D79 | **Undo** of the last check-off reopens the to-do and restores the occurrence as usual (D63/D64). It's refused with the title-clash message when an open to-do on the list has taken the name since. | Claude |
 | D80 | **Display.** The rule description ends with ", from DD-MM-YYYY" (only while `start` is still ahead) and ", until DD-MM-YYYY". `render.when`: "Next: …"; when the next one is the last, "Next (last): …"; when the last is up and nothing follows, "Last reminder — nothing after this one". `short_when` shows "🔁 last: …" for the final one. | Claude |
@@ -111,34 +111,38 @@ Example (today Sat 14-11-2026): `monday` → 16-11-2026. On Monday 16-11 at 14:0
   rejects the new JSON keys (`extra="forbid"`). Rollback = restore the pre-upgrade backup.
 
 ### Checklist
-1. [ ] Recurrence core — main session.
-2. [ ] Core tests — **Haiku**, reviewed (`tests/unit/test_recurrence_window.py`): every rule type with
+1. [x] Recurrence core — main session.
+2. [x] Core tests — **Haiku**, reviewed (`tests/unit/test_recurrence_window.py`): every rule type with
    `start` only / `end` only / both; first = first match on/after start, last = last match on/before
    end; non-matching start/end days; `end < start` refused; JSON round-trip and old shapes unchanged;
    `next_occurrence` → None after the last; `every` ≥ 2 with `end`; DST day as last day; `describe`
    suffixes.
-3. [ ] Services — main session (above).
-4. [ ] Service tests — **Haiku**, reviewed: create with nothing in the window refused; scheduler posts
+3. [x] Services — main session (above).
+4. [x] Service tests — **Haiku**, reviewed: create with nothing in the window refused; scheduler posts
    the last one and leaves no pending; catch-up past `end` gives one late reminder and nothing after;
    last checked off (reminder, early, `/todo done`) → to-do done, name free (new open to-do with the same
    title works); undo reopens; undo refused after the name was taken; edit `end` earlier cancels a pending
    occurrence past it; the D75 exception with a reminder up; `start:none`/`end:none`; `final_occurrence_id`.
-5. [ ] Bot — main session for the confirm and render; **Haiku** for the option copies.
-6. [ ] Render unit tests — **Haiku**: `when`/`short_when` for next, next-last, last-up; prompt with
+5. [x] Bot — main session for the render; **Haiku** for the option copies (the confirm was dropped, D77).
+6. [x] Render unit tests — **Haiku**: `when`/`short_when` for next, next-last, last-up; prompt with
    last only, non-assignee only, both.
-7. [ ] Docs — Opus: `CLAUDE.md` §4 (rules, "at most one pending, none after the last"), §6 D73–D80,
+7. [x] Docs — Opus: `CLAUDE.md` §4 (rules, "at most one pending, none after the last"), §6 D73–D80,
    out-of-scope list; README; runbook note.
-8. [ ] Checks. Handoff.
+8. [x] Checks. Handoff.
 
 ### Manual test (Tim)
-- [ ] `/todo repeat daily times:20:00 start:monday end:wednesday` → `/todo show` says "from … until …",
+- [x] `/todo repeat daily times:20:00 start:monday end:wednesday` → `/todo show` says "from … until …",
       fires Mon, Tue, Wed.
-- [ ] On Wednesday the reminder says Next (last); Done → last-reminder question → Check off → to-do is
-      done, gone from `/todo list`, and a new to-do with the same title can be added.
-- [ ] Undo it (before adding the duplicate) → back, reminder re-posted.
-- [ ] Non-assignee on the last one → one message with both questions.
-- [ ] `/todo edit end:none` → back to repeating forever.
-- [ ] `end` before any occurrence → refused with the dates.
+- [x] Done on Tuesday's reminder → the reply says "Next (last): …"; `/todo show` too, `/todo list`
+      shows "🔁 last: …".
+- [x] Wednesday's reminder up → `/todo show` says "Last reminder — nothing after this one".
+- [x] Done on it (no extra question) → the reply ends with `render.LAST_DONE` ("This was the last
+      occurance of this reminder, …"); the to-do is gone from `/todo list`.
+- [x] Undo it → back, reminder re-posted. Check it off again → a new to-do with the same title can
+      be added.
+- [x] Non-assignee on the last one → only the usual "assigned to …, not you" question.
+- [x] `/todo edit end:none` → back to repeating forever.
+- [x] `end` before any occurrence → refused with the dates.
 
 ---
 
@@ -271,3 +275,34 @@ Numbered by Tim's original feature order.
   with "today counts" as D71 asks for date-only options.
 - **Open questions:** none.
 - **Manual tests:** all four passed on the dev bot (Tim, 2026-11-14).
+
+### Segment 2 — 2026-11-14
+- **Built:** `start`/`end` on `_Rule` (all types, JSON keys only when set, `end ≥ start` validator);
+  `_matches` checks the window; `next_occurrence` → `None` when the series is over;
+  `anchored` checks the year-ahead limit for every rule; `describe(rule, tz, today)` with the D80
+  suffixes; `core.text.plain_date` (DD-MM-YYYY). New `services/_series.py` (`final_occurrence`,
+  `is_over`, `require_upcoming`, `nothing_between`). `add_next_pending` → `Occurrence | None`;
+  `finish_occurrence` marks the to-do done after the last one (`UndoToken.finished`); `undo` reopens it
+  behind the title check. `TodoView.final_occurrence_id`/`ends_on`; `todo_view` takes `now`. Bot:
+  `start`/`end` on all four repeat commands (`repeat.window` → `options.with_window`, validated),
+  `/todo edit start|end` for every rule with `none` (`options.CLEAR`, `adapter.edit_date`);
+  `render.when`/`short_when`; `render.done_text` says "Next (last): …" before the final one and
+  adds `LAST_DONE` (Tim's wording) after it (Tim's requests). The D77 confirmation was built and then removed at
+  Tim's request (views, `confirm.py` and `check_off_prompt` are unchanged from before the segment).
+- **Tests:** `test_recurrence_window.py` (70), `test_services_series_end.py` (21, integration),
+  `test_render.py` (+21); three weekly `describe` cases now pass `today` (pattern only).
+- **Checks:** ruff check/format clean; full `pytest` with the test Postgres: 822 passed. No model
+  change, so no `alembic check`.
+- **Deviations:**
+  - When `end` is already past, the D75 refusal reads "No reminder of **title** is left: it ends on
+    DD-MM-YYYY." ("falls between" would show a backwards range).
+  - `/todo done` on an open repeating to-do with nothing open whose series is over (its last reminder
+    failed, e.g. no channel) marks it done (undoable) instead of "nothing to check off right now";
+    otherwise it would stay open forever.
+  - Weekly `every` ≥ 2 without `start` and nothing left before `end` anchors to today (the service
+    then refuses, or the D75 exception keeps the reminder as the last).
+  - `describe` with `today=None` always shows "from" (the services always pass today).
+  - `services/_common.py` is ~415 lines (the series logic went to `_series.py`).
+- **Open questions:** an `end` earlier than the reminder that's up is accepted (D75 exception; the
+  reminder simply becomes the last). Refuse instead?
+- **Manual tests:** all passed on the dev bot (Tim, 2026-11-14).
