@@ -23,6 +23,9 @@ class DueInput(StrictModel):
 
     date: dt.date | None = None
     time: dt.time | None = None
+    roll_week: bool = False
+    """The date came from a weekday name: if the moment has passed, use the same weekday next
+    week (D71)."""
 
 
 class TodoPatch(StrictModel):

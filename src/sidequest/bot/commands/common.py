@@ -37,7 +37,9 @@ Every = app_commands.Range[int, 1, WEEK_INTERVAL_MAX]
 
 # Weekly-rule options shared by `/todo repeat weekly` and `/todo edit` (S9).
 EVERY_DESCRIPTION = "Repeat every N weeks (default 1)"
-START_DESCRIPTION = "Don't start before this date; with every ≥ 2 it also picks the weeks"
+START_DESCRIPTION = (
+    "Don't start before this date (or a weekday); with every ≥ 2 it also picks the weeks"
+)
 type Create = Callable[[Uow, Actor, str, str | None], Awaitable[Outcome[TodoView]]]
 
 

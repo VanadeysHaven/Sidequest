@@ -1,6 +1,6 @@
 # Brief — Weekday dates, suspensions, per-day times, start and end dates
 
-**Status:** ready · **Branch:** `claude/dates-and-schedules` · **Migration:** none (all new data lives in
+**Status:** in progress (Segment 1 done; Segments 2–4 ready) · **Branch:** `claude/dates-and-schedules` · **Migration:** none (all new data lives in
 the rule JSON) · Written by Claude (Opus 5.5), 2026-11-14.
 
 Four features, one segment each, **numbered in build order**: run Segment 1, 2, 3, 4, one per session.
@@ -49,18 +49,18 @@ Example (today Sat 14-11-2026): `monday` → 16-11-2026. On Monday 16-11 at 14:0
 - `common.check_options` already validates the format with a dummy date; weekday words pass.
 
 ### Checklist
-1. [ ] Core + adapter + options + descriptions — **Haiku** from this section, reviewed.
-2. [ ] Tests — **Haiku**, reviewed: `parse_date` for every word from a Wednesday and on the matching day;
+1. [x] Core + adapter + options + descriptions — **Haiku** from this section, reviewed.
+2. [x] Tests — **Haiku**, reviewed: `parse_date` for every word from a Wednesday and on the matching day;
    `is_weekday_word`; `resolve_due` with `roll_week` (later today, earlier today, exactly now → next week,
    DST week in Europe/Amsterdam); `edit_patch` keeping the flag; a non-weekday date unchanged.
-3. [ ] Docs — Opus: `CLAUDE.md` §4 (dates line), §6 (D70–D72); README features line.
-4. [ ] Checks (CLAUDE.md §7). Handoff.
+3. [x] Docs — Opus: `CLAUDE.md` §4 (dates line), §6 (D70–D72); README features line.
+4. [x] Checks (CLAUDE.md §7). Handoff.
 
 ### Manual test (Tim)
-- [ ] `/todo add date:monday time:14:30` → due next Monday 14:30.
-- [ ] On the weekday itself: a time still to come → today; a time already gone → next week.
-- [ ] `/todo edit todo:<timed> date:friday` → Friday, same time.
-- [ ] `date:mondy` → error with the new hint.
+- [x] `/todo add date:monday time:14:30` → due next Monday 14:30.
+- [x] On the weekday itself: a time still to come → today; a time already gone → next week.
+- [x] `/todo edit todo:<timed> date:friday` → Friday, same time.
+- [x] `date:mondy` → error with the new hint.
 
 ---
 
@@ -256,3 +256,18 @@ Numbered by Tim's original feature order.
 
 ## Handoff
 (per segment, filled in by the session that builds it)
+
+### Segment 1 — 2026-11-14
+- **Built:** weekday names in every date option (`core.timeparse._DAY_WORDS`, shared with
+  `parse_weekdays`; `is_weekday_word`; `parse_date` → next such day, today included).
+  `DueInput.roll_week` → `resolve_due(..., roll_week=)` adds 7 days (resolved again) instead of
+  `InPast`; set by `adapter.due_input`, kept by `options.edit_patch`, passed in `create_once` and
+  `_retime_once`. New `DATE_HINT`; `date`/`start` descriptions say "or a weekday" (edit `start`: 91 chars).
+- **Tests:** `test_timeparse.py` (+53 cases: every word from a Wednesday, matching day, rejected words,
+  `is_weekday_word`, `roll_week` incl. both DST changes), `test_options.py` (+3, flag kept).
+- **Checks:** ruff check/format clean; full `pytest` with the test Postgres: 710 passed, 0 skipped.
+  No model change, so no `alembic check`.
+- **Deviations:** none. `start` (weekly) already went through `parse_date`, so it accepts weekday names
+  with "today counts" as D71 asks for date-only options.
+- **Open questions:** none.
+- **Manual tests:** all four passed on the dev bot (Tim, 2026-11-14).

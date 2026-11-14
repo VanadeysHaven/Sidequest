@@ -25,7 +25,9 @@ _DMY_SHORT_YEAR_RE = re.compile(r"\d{1,2}([-/.])\d{1,2}\1\d{2}")
 _MONTH_DAY_RE = re.compile(r"(\d{1,2})(st|nd|rd|th)?")
 
 TIME_HINT = "Use 24-hour time, e.g. 14:30."
-DATE_HINT = "Use YYYY-MM-DD or DD-MM-YYYY (e.g. 2026-11-12), or today/tomorrow."
+DATE_HINT = (
+    "Use YYYY-MM-DD or DD-MM-YYYY (e.g. 2026-11-12), today, tomorrow or a weekday (e.g. monday)."
+)
 
 
 # --- times -------------------------------------------------------------------------------
@@ -60,14 +62,32 @@ def parse_times(s: str) -> list[time]:
 
 # --- dates -------------------------------------------------------------------------------
 
+_DAY_WORDS: dict[str, Weekday] = {
+    **{w.value: w for w in Weekday},
+    **{w.full_name.lower(): w for w in Weekday},
+    "tues": Weekday.TUE,
+    "weds": Weekday.WED,
+    "thur": Weekday.THU,
+    "thurs": Weekday.THU,
+}
+
+
+def is_weekday_word(s: str) -> bool:
+    """Whether `s` is a single weekday name (`mon`, `thurs`, `Monday`, …), for dates (D70)."""
+    return s.strip().lower() in _DAY_WORDS
+
 
 def parse_date(s: str, today: date) -> date:
-    """`YYYY-MM-DD`, `DD-MM-YYYY` (separators `-` `/` `.`), `today` or `tomorrow`."""
+    """`YYYY-MM-DD`, `DD-MM-YYYY` (separators `-` `/` `.`), `today`, `tomorrow` or a weekday
+    name, which is the next such day (today if it is that weekday, D70, D71).
+    """
     text = s.strip().lower()
     if text == "today":
         return today
     if text == "tomorrow":
         return today + timedelta(days=1)
+    if (day := _DAY_WORDS.get(text)) is not None:
+        return today + timedelta(days=(day.index - today.weekday()) % 7)
 
     if match := _YMD_RE.fullmatch(text):
         year, month, day = int(match[1]), int(match[3]), int(match[4])
@@ -87,12 +107,7 @@ def parse_date(s: str, today: date) -> date:
 # --- rule parts --------------------------------------------------------------------------
 
 _WEEKDAY_WORDS: dict[str, tuple[Weekday, ...]] = {
-    **{w.value: (w,) for w in Weekday},
-    **{w.full_name.lower(): (w,) for w in Weekday},
-    "tues": (Weekday.TUE,),
-    "weds": (Weekday.WED,),
-    "thur": (Weekday.THU,),
-    "thurs": (Weekday.THU,),
+    **{word: (day,) for word, day in _DAY_WORDS.items()},
     "weekdays": (Weekday.MON, Weekday.TUE, Weekday.WED, Weekday.THU, Weekday.FRI),
     "weekend": (Weekday.SAT, Weekday.SUN),
 }
@@ -158,8 +173,14 @@ class Timed:
 type Due = Untimed | Timed
 
 
-def resolve_due(d: date | None, t: time | None, tz: ZoneInfo, now: datetime) -> Due:
-    """Turn optional date/time input for a one-time to-do into its due moment (D17, D18)."""
+def resolve_due(
+    d: date | None, t: time | None, tz: ZoneInfo, now: datetime, *, roll_week: bool = False
+) -> Due:
+    """Turn optional date/time input for a one-time to-do into its due moment (D17, D18).
+
+    `roll_week`: the date came from a weekday name; a passed moment moves to the same weekday
+    next week (D71).
+    """
     if now.tzinfo is None:
         raise ValueError("naive datetime; use timezone-aware UTC")
     if t is None:
@@ -176,5 +197,7 @@ def resolve_due(d: date | None, t: time | None, tz: ZoneInfo, now: datetime) -> 
 
     at = resolve_local(d, t, tz)
     if at <= now:
-        raise InPast(f"{ts(at)} is in the past. Pick a later date or time.")
+        if not roll_week:
+            raise InPast(f"{ts(at)} is in the past. Pick a later date or time.")
+        at = resolve_local(d + timedelta(days=7), t, tz)
     return Timed(at)

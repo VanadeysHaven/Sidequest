@@ -12,7 +12,8 @@ ping the assignees. Sidequest only works in servers (no DMs).
 - **Named lists per server:** a Default List open to everyone, plus lists with an owner and
   collaborators (only they can change and check off its to-dos; everyone can see them).
   Everyone picks their own default list with `/settings default-list`.
-- **One-time to-dos**, with or without a date and time (`HH:MM`, 24-hour).
+- **One-time to-dos**, with or without a date and time (`HH:MM`, 24-hour). Dates can be
+  written as `2026-11-16`, `16-11-2026`, `today`, `tomorrow` or a weekday (`monday`).
 - **Repeating to-dos:** daily, weekly (several days, optionally every 2–52 weeks and from a
   start date), monthly on a weekday ("first Sunday") or on a day of the month ("the 15th",
   "last day"), each with one or more times.

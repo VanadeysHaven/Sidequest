@@ -170,7 +170,10 @@ every check.
 - Assignees: ≤ 10, default the creator.
 - Timezones: per user (`/settings timezone`), else `DEFAULT_TIMEZONE` (default UTC, mentioned once).
   Create commands take a `timezone` override; the to-do stores its zone. Dates: `YYYY-MM-DD`,
-  `DD-MM-YYYY` (`-`, `/`, `.`), `today`, `tomorrow`.
+  `DD-MM-YYYY` (`-`, `/`, `.`), `today`, `tomorrow`, or a weekday name (`mon`, `monday`, `tues`,
+  `thurs`, …; D70): the next such day in the to-do's zone, today included. With a time, a weekday
+  whose moment has passed today rolls to next week (`DueInput.roll_week`, D71); `today` + a past
+  time is still refused.
 
 ### Repeating rules (`core/recurrence.py`, stored as JSONB)
 Daily · weekly (weekdays, `every` 1–52 weeks, optional `start` date; weeks run Mon–Sun) · monthly by
@@ -265,6 +268,9 @@ and are added here and in the feature's brief.
 | D63–D66 | Undo restores the state from before (status, follow-up cancelled, subtask ticks); a reminder that was up is re-posted with pings; refused when it would clash with what happened since; no storage change (`UndoToken`). |
 | D67 | Non-assignees (everyone, incl. owners and Manage Server) confirm before checking off; subtasks never ask. |
 | D68/D69 | Undo wording ("↩️ Undone: **title** is open again."); `/todo upcoming` gets an undo select (newest first, any order). |
+| D70 | Every date option accepts a weekday name (the single-day `days` words, any case) → the next date with that weekday, in the to-do's zone. |
+| D71 | Weekday = today: with a time, today if the moment is still to come, else next week; for date-only options today counts. `today` itself still refuses a past moment. |
+| D72 | `DATE_HINT` and date option descriptions mention "a weekday (e.g. monday)"; `next monday` is not supported. |
 
 **Out of scope for now:** web frontend · snooze · role assignees · every N days / N months · start dates
 for daily/monthly rules · date-only to-dos · per-server default timezone · localisation · digests.

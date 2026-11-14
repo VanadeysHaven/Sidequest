@@ -21,7 +21,7 @@ import discord
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from sidequest.core.errors import InvalidOperation
-from sidequest.core.timeparse import parse_date, parse_time
+from sidequest.core.timeparse import is_weekday_word, parse_date, parse_time
 from sidequest.core.tz import get_zone
 from sidequest.scheduler.signal import ScheduleSignal
 from sidequest.services import meta
@@ -148,15 +148,20 @@ async def zone_name(uow: Uow, actor: Actor, override: str | None) -> str:
 async def due_input(
     uow: Uow, actor: Actor, date_text: str | None, time_text: str | None, tz: str | None
 ) -> DueInput:
-    """Parse the `date`/`time` options. `today`/`tomorrow` are relative to the zone the
-    to-do will use."""
+    """Parse the `date`/`time` options. `today`/`tomorrow` and weekday names are relative to
+    the zone the to-do will use."""
     parsed_time = parse_time(time_text) if time_text else None
     parsed_date = await local_date(uow, actor, date_text, tz) if date_text else None
-    return DueInput(date=parsed_date, time=parsed_time)
+    return DueInput(
+        date=parsed_date,
+        time=parsed_time,
+        roll_week=bool(date_text) and is_weekday_word(date_text),
+    )
 
 
 async def local_date(uow: Uow, actor: Actor, text: str, tz: str | None) -> date:
-    """Parse a date option. `today`/`tomorrow` are relative to the zone the to-do will use."""
+    """Parse a date option. `today`/`tomorrow` and weekday names are relative to the zone
+    the to-do will use."""
     zone = get_zone(await zone_name(uow, actor, tz))
     return parse_date(text, uow.clock.now().astimezone(zone).date())
 

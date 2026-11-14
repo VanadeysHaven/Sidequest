@@ -15,7 +15,7 @@ def edit_command() -> app_commands.Command:  # type: ignore[type-arg]
     @app_commands.describe(
         todo="The to-do",
         title="New title",
-        date="One-time: new date (keeps the time if you give none)",
+        date="One-time: new date or a weekday (keeps the time if you give none)",
         time="One-time: new 24-hour time, e.g. 14:30",
         times="Repeating: new times, e.g. 08:00, 20:00",
         days="Weekly: new weekdays, e.g. mon,thu",

@@ -93,7 +93,11 @@ def edit_patch(
         if due is not None:
             if due.time is None and due.date is not None and todo.due_at is not None:
                 zone = get_zone(timezone or todo.timezone)
-                due = DueInput(date=due.date, time=todo.due_at.astimezone(zone).time())
+                due = DueInput(
+                    date=due.date,
+                    time=todo.due_at.astimezone(zone).time(),
+                    roll_week=due.roll_week,
+                )
             fields["due"] = due
     if not fields:
         raise InvalidOperation("Nothing to change: give at least one option besides `todo`.")

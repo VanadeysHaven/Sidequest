@@ -41,7 +41,7 @@ def add_command() -> app_commands.Command:  # type: ignore[type-arg]
     @app_commands.command(name="add", description="Add a one-time to-do")
     @app_commands.describe(**CREATE_DESCRIPTIONS)
     @app_commands.describe(
-        date="YYYY-MM-DD, DD-MM-YYYY, today or tomorrow (needs a time)",
+        date="YYYY-MM-DD, DD-MM-YYYY, today, tomorrow or a weekday (needs a time)",
         time="24-hour time, e.g. 14:30 (without a date: the next 14:30)",
     )
     @app_commands.rename(list_="list")

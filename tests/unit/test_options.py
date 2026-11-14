@@ -149,6 +149,26 @@ def test_date_only_on_untimed_todo_stays_untimed() -> None:
     assert patch.due == DueInput(date=date(2030, 1, 10))
 
 
+def test_date_only_keeps_roll_week_flag() -> None:
+    todo = make_todo(due_at=START, timezone="Europe/Amsterdam")
+    patch = edit_patch(todo, due=DueInput(date=date(2030, 1, 10), roll_week=True))
+    assert patch.due == DueInput(date=date(2030, 1, 10), time=time(10, 0), roll_week=True)
+
+
+def test_date_and_time_keep_roll_week_flag() -> None:
+    todo = make_todo(due_at=START, timezone="Europe/Amsterdam")
+    patch = edit_patch(todo, due=DueInput(date=date(2030, 1, 10), time=time(8, 0), roll_week=True))
+    assert patch.due is not None
+    assert patch.due.roll_week is True
+
+
+def test_plain_date_has_no_roll_week() -> None:
+    todo = make_todo(due_at=START, timezone="Europe/Amsterdam")
+    patch = edit_patch(todo, due=DueInput(date=date(2030, 1, 10)))
+    assert patch.due is not None
+    assert patch.due.roll_week is False
+
+
 # --- every N weeks (S9) ---
 
 

@@ -103,7 +103,7 @@ async def create_once(
     `list_id` None: the actor's default list (D45)."""
     lst = await _target_list(uow, actor, list_id)
     zone = await c.effective_zone(uow, actor, timezone)
-    resolved = resolve_due(due.date, due.time, zone, uow.clock.now())
+    resolved = resolve_due(due.date, due.time, zone, uow.clock.now(), roll_week=due.roll_week)
     todo = await _new_todo(uow, actor, lst, TodoKind.ONCE, title, details, zone.key, assignee_ids)
     timed = isinstance(resolved, Timed)
     if timed:
@@ -238,7 +238,9 @@ async def _retime_once(uow: Uow, todo: Todo, patch: TodoPatch) -> list[Effect]:
     old_zone = get_zone(todo.timezone)
     zone = get_zone(patch.timezone) if patch.timezone else old_zone
     if patch.due is not None:
-        resolved = resolve_due(patch.due.date, patch.due.time, zone, now)
+        resolved = resolve_due(
+            patch.due.date, patch.due.time, zone, now, roll_week=patch.due.roll_week
+        )
     elif todo.due_at is not None:  # timezone only: same wall-clock time in the new zone
         local = todo.due_at.astimezone(old_zone)
         resolved = resolve_due(local.date(), local.time().replace(tzinfo=None), zone, now)
